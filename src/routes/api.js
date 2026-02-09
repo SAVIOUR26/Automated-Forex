@@ -83,14 +83,50 @@ module.exports = function(app) {
     res.json(transaction);
   });
 
-  // ─── Monitor Control ───────────────────────────────────
+  // ─── Monitor Control (3-step flow) ──────────────────────
+  //
+  // Step 1: Launch Browser  → opens Chromium on VPS display
+  // Step 2: (User logs into Binance via noVNC manually)
+  // Step 3: Start Monitoring → polls for "Buyer Paid" orders
+  //
+
+  // Step 1: Launch the browser (user then logs in via noVNC)
+  router.post('/monitor/launch', requireAuth, async (req, res) => {
+    try {
+      if (!monitor) return res.status(500).json({ error: 'Monitor not initialized' });
+
+      if (monitor.browser) {
+        return res.json({ success: true, message: 'Browser already running', status: monitor.getStatus() });
+      }
+
+      await monitor.launch();
+
+      // Navigate to Binance login page so user can see it in noVNC
+      await monitor.page.goto('https://www.binance.com/en/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      }).catch(() => {});
+
+      // Take initial screenshot
+      await monitor.takeScreenshot();
+
+      ActivityLog.log('browser_launched');
+      res.json({ success: true, message: 'Browser launched. Log into Binance via the noVNC viewer, then click Start Monitoring.', status: monitor.getStatus() });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Step 3: Start monitoring (after user has logged into Binance)
   router.post('/monitor/start', requireAuth, async (req, res) => {
     try {
       if (!monitor) return res.status(500).json({ error: 'Monitor not initialized' });
 
       if (!monitor.browser) {
-        await monitor.launch();
+        return res.status(400).json({ error: 'Browser not launched. Click "Launch Browser" first and log into Binance.' });
       }
+
+      // Navigate to P2P orders page and start polling
       await monitor.navigateToBinance();
       await monitor.startMonitoring();
 
@@ -104,6 +140,7 @@ module.exports = function(app) {
     }
   });
 
+  // Stop monitoring (keeps browser open)
   router.post('/monitor/stop', requireAuth, async (req, res) => {
     try {
       if (monitor) {
@@ -118,16 +155,37 @@ module.exports = function(app) {
     }
   });
 
+  // Close browser entirely
+  router.post('/monitor/close', requireAuth, async (req, res) => {
+    try {
+      if (monitor) {
+        await monitor.close();
+        Settings.set('monitor_active', 'false');
+        ActivityLog.log('browser_closed');
+      }
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.get('/monitor/status', requireAuth, (req, res) => {
-    res.json(monitor ? monitor.getStatus() : { isRunning: false });
+    res.json(monitor ? monitor.getStatus() : { isRunning: false, browserLaunched: false });
   });
 
   router.get('/monitor/screenshot', requireAuth, async (req, res) => {
-    const screenshotPath = monitor ? await monitor.getLatestScreenshot() : null;
+    if (!monitor) return res.status(404).json({ error: 'Monitor not initialized' });
+
+    // Take a fresh screenshot if browser is running
+    if (monitor.browser && monitor.page) {
+      await monitor.takeScreenshot().catch(() => {});
+    }
+
+    const screenshotPath = await monitor.getLatestScreenshot();
     if (screenshotPath) {
       res.sendFile(screenshotPath);
     } else {
-      res.status(404).json({ error: 'No screenshot available' });
+      res.status(404).json({ error: 'No screenshot available. Launch the browser first.' });
     }
   });
 

@@ -261,9 +261,9 @@ class BinanceMonitor extends EventEmitter {
 
   async takeScreenshot() {
     if (!this.page) return null;
-    const screenshotPath = path.join(SCREENSHOT_DIR, `screenshot-${Date.now()}.png`);
-    await this.page.screenshot({ path: screenshotPath });
-    return screenshotPath;
+    const latestPath = path.join(SCREENSHOT_DIR, 'latest.png');
+    await this.page.screenshot({ path: latestPath });
+    return latestPath;
   }
 
   async getLatestScreenshot() {

@@ -52,13 +52,19 @@
         <div class="top-bar-actions">
           <div class="monitor-status">
             <span class="status-dot" id="topMonitorDot"></span>
-            <span id="topMonitorLabel" style="font-size:13px;">Monitor Off</span>
+            <span id="topMonitorLabel" style="font-size:13px;">Browser Off</span>
           </div>
-          <button class="btn btn-sm btn-success" id="btnStartMonitor">
-            <i class="bi bi-play-fill"></i> Start
+          <button class="btn btn-sm btn-primary" id="btnLaunchBrowser">
+            <i class="bi bi-display"></i> Launch Browser
+          </button>
+          <button class="btn btn-sm btn-success" id="btnStartMonitor" style="display:none;">
+            <i class="bi bi-play-fill"></i> Start Monitoring
           </button>
           <button class="btn btn-sm btn-danger" id="btnStopMonitor" style="display:none;">
             <i class="bi bi-stop-fill"></i> Stop
+          </button>
+          <button class="btn btn-sm btn-outline" id="btnCloseBrowser" style="display:none;" title="Close browser">
+            <i class="bi bi-x-lg"></i>
           </button>
           <button class="btn btn-sm btn-outline" id="btnLogout">
             <i class="bi bi-box-arrow-right"></i>
@@ -169,6 +175,18 @@
 
         <!-- ─── Browser Section ───────────────────────── -->
         <section class="section" id="sec-browser">
+          <!-- Step-by-step instructions -->
+          <div class="card" style="margin-bottom:16px;border-left:4px solid var(--primary);">
+            <div class="card-body" style="padding:14px 18px;">
+              <h3 style="margin-bottom:8px;font-size:15px;">How to Start Monitoring</h3>
+              <div style="display:flex;gap:24px;font-size:13px;">
+                <div><strong>Step 1:</strong> Click <em>"Launch Browser"</em> above</div>
+                <div><strong>Step 2:</strong> Log into Binance below (noVNC or screenshot)</div>
+                <div><strong>Step 3:</strong> Click <em>"Start Monitoring"</em> to begin auto-detection</div>
+              </div>
+            </div>
+          </div>
+
           <!-- View Mode Toggle -->
           <div style="display:flex;gap:8px;margin-bottom:16px;">
             <button class="btn btn-sm btn-primary" id="btnViewInteractive" onclick="showBrowserView('interactive')">
@@ -187,7 +205,8 @@
             </div>
             <div class="card-body" style="padding:0;">
               <p style="padding:12px 18px 0;font-size:13px;color:var(--text-secondary);">
-                Full interactive control of the Chromium browser on the VPS. Use this to <strong>log into Binance</strong>, navigate P2P, and manage orders.
+                Full interactive control of the Chromium browser on the VPS. Use this to <strong>log into Binance</strong>, navigate to P2P, and manage orders.
+                Once logged in, click "Start Monitoring" in the top bar.
               </p>
               <div class="browser-view" style="margin:12px;min-height:600px;">
                 <iframe id="novncFrame" src="/novnc/vnc.html?autoconnect=true&resize=scale"
@@ -207,7 +226,7 @@
             </div>
             <div class="card-body">
               <p style="margin-bottom:12px;font-size:13px;color:var(--text-secondary);">
-                Static screenshot of what the monitor sees. Auto-refreshes every 15 seconds.
+                Screenshot of the browser running on the server. Auto-refreshes every 15 seconds.
               </p>
               <div class="browser-view">
                 <img id="browserScreenshot" src="/api/monitor/screenshot" alt="Browser view"
@@ -215,7 +234,7 @@
                 <div class="browser-placeholder" id="browserPlaceholder">
                   <div style="text-align:center;">
                     <i class="bi bi-display" style="font-size:48px;opacity:0.3;"></i>
-                    <p style="margin-top:8px;">Start the monitor to see browser view</p>
+                    <p style="margin-top:8px;">Click "Launch Browser" to start</p>
                   </div>
                 </div>
               </div>

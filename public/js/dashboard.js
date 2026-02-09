@@ -41,7 +41,7 @@ function handleWsMessage(msg) {
       loadRecentTransactions();
       break;
     case 'monitor_status':
-      updateMonitorUI(msg.data.isRunning);
+      updateMonitorUI(msg.data);
       break;
     case 'monitor_error':
       showToast(`Monitor error: ${msg.data.message}`, 'error');
@@ -117,7 +117,7 @@ async function loadDashboardStats() {
   document.getElementById('statPending').textContent = stats.pending;
   document.getElementById('statFees').textContent = Number(stats.today.fees).toLocaleString();
 
-  updateMonitorUI(stats.monitor.isRunning);
+  updateMonitorUI(stats.monitor);
 }
 
 // ─── Transactions ─────────────────────────────────────────
@@ -246,37 +246,94 @@ async function savePhone() {
   loadTransactions();
 }
 
-// ─── Monitor Control ──────────────────────────────────────
+// ─── Monitor Control (3-step flow) ────────────────────────
+//
+// Step 1: Launch Browser → user logs into Binance via noVNC
+// Step 2: Start Monitoring → polls P2P orders for "Buyer Paid"
+// Step 3: Stop / Close browser
+//
 
+// Step 1: Launch Browser
+document.getElementById('btnLaunchBrowser').addEventListener('click', async () => {
+  showToast('Launching browser... please wait', 'warning');
+  const result = await apiFetch('/monitor/launch', { method: 'POST' });
+  if (result?.success) {
+    showToast(result.message || 'Browser launched! Log into Binance now.', 'success');
+    updateMonitorUI({ browserLaunched: true, isRunning: false });
+    // Switch to browser tab so user can see it
+    showSection('browser');
+  } else {
+    showToast(result?.error || 'Failed to launch browser', 'error');
+  }
+});
+
+// Step 2: Start Monitoring (after Binance login)
 document.getElementById('btnStartMonitor').addEventListener('click', async () => {
-  showToast('Starting monitor...', 'warning');
+  showToast('Starting monitoring...', 'warning');
   const result = await apiFetch('/monitor/start', { method: 'POST' });
   if (result?.success) {
-    updateMonitorUI(true);
-    showToast('Monitor started', 'success');
+    updateMonitorUI({ browserLaunched: true, isRunning: true });
+    showToast('Monitoring started! Watching for paid orders.', 'success');
   } else {
     showToast(result?.error || 'Failed to start monitor', 'error');
   }
 });
 
+// Stop monitoring (keeps browser open)
 document.getElementById('btnStopMonitor').addEventListener('click', async () => {
   const result = await apiFetch('/monitor/stop', { method: 'POST' });
   if (result?.success) {
-    updateMonitorUI(false);
-    showToast('Monitor stopped');
+    updateMonitorUI({ browserLaunched: true, isRunning: false });
+    showToast('Monitoring stopped. Browser still open.');
   }
 });
 
-function updateMonitorUI(isRunning) {
+// Close browser entirely
+document.getElementById('btnCloseBrowser').addEventListener('click', async () => {
+  if (!confirm('Close the browser? You will need to re-launch and log into Binance again.')) return;
+  const result = await apiFetch('/monitor/close', { method: 'POST' });
+  if (result?.success) {
+    updateMonitorUI({ browserLaunched: false, isRunning: false });
+    showToast('Browser closed.');
+  }
+});
+
+function updateMonitorUI(status) {
+  const browserLaunched = status.browserLaunched || false;
+  const isRunning = status.isRunning || false;
+
   const dots = [document.getElementById('monitorDot'), document.getElementById('topMonitorDot')];
   const labels = [document.getElementById('monitorLabel'), document.getElementById('topMonitorLabel')];
+  const launchBtn = document.getElementById('btnLaunchBrowser');
   const startBtn = document.getElementById('btnStartMonitor');
   const stopBtn = document.getElementById('btnStopMonitor');
+  const closeBtn = document.getElementById('btnCloseBrowser');
 
-  dots.forEach(d => d?.classList.toggle('active', isRunning));
-  labels.forEach(l => { if (l) l.textContent = isRunning ? 'Monitor: Active' : 'Monitor: Off'; });
-  startBtn.style.display = isRunning ? 'none' : '';
-  stopBtn.style.display = isRunning ? '' : 'none';
+  if (isRunning) {
+    // Monitoring active
+    dots.forEach(d => d?.classList.add('active'));
+    labels.forEach(l => { if (l) l.textContent = 'Monitoring Active'; });
+    launchBtn.style.display = 'none';
+    startBtn.style.display = 'none';
+    stopBtn.style.display = '';
+    closeBtn.style.display = '';
+  } else if (browserLaunched) {
+    // Browser open but not monitoring — user should log in then start
+    dots.forEach(d => d?.classList.remove('active'));
+    labels.forEach(l => { if (l) l.textContent = 'Browser Open — Log into Binance'; });
+    launchBtn.style.display = 'none';
+    startBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    closeBtn.style.display = '';
+  } else {
+    // Nothing running
+    dots.forEach(d => d?.classList.remove('active'));
+    labels.forEach(l => { if (l) l.textContent = 'Browser Off'; });
+    launchBtn.style.display = '';
+    startBtn.style.display = 'none';
+    stopBtn.style.display = 'none';
+    closeBtn.style.display = 'none';
+  }
 }
 
 // ─── Browser View Toggle ──────────────────────────────────
