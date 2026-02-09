@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NgaboPay - Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <h2>NgaboPay</h2>
+        <small>Forex Exchange System</small>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item active" data-section="dashboard">
+          <span class="icon"><i class="bi bi-grid"></i></span> Dashboard
+        </a>
+        <a class="nav-item" data-section="transactions">
+          <span class="icon"><i class="bi bi-arrow-left-right"></i></span> Transactions
+        </a>
+        <a class="nav-item" data-section="browser">
+          <span class="icon"><i class="bi bi-globe"></i></span> Binance Browser
+        </a>
+        <a class="nav-item" data-section="settings">
+          <span class="icon"><i class="bi bi-gear"></i></span> Settings
+        </a>
+        <a class="nav-item" data-section="activity">
+          <span class="icon"><i class="bi bi-clock-history"></i></span> Activity Log
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="monitor-status">
+          <span class="status-dot" id="monitorDot"></span>
+          <span id="monitorLabel">Monitor: Off</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="top-bar">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button class="btn btn-outline btn-sm" id="menuToggle" style="display:none;">
+            <i class="bi bi-list"></i>
+          </button>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <div class="top-bar-actions">
+          <div class="monitor-status">
+            <span class="status-dot" id="topMonitorDot"></span>
+            <span id="topMonitorLabel" style="font-size:13px;">Monitor Off</span>
+          </div>
+          <button class="btn btn-sm btn-success" id="btnStartMonitor">
+            <i class="bi bi-play-fill"></i> Start
+          </button>
+          <button class="btn btn-sm btn-danger" id="btnStopMonitor" style="display:none;">
+            <i class="bi bi-stop-fill"></i> Stop
+          </button>
+          <button class="btn btn-sm btn-outline" id="btnLogout">
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </div>
+      </header>
+
+      <div class="content-area">
+        <!-- ─── Dashboard Section ─────────────────────── -->
+        <section class="section active" id="sec-dashboard">
+          <div class="stats-grid">
+            <div class="stat-card primary">
+              <div class="stat-label">Today's Transactions</div>
+              <div class="stat-value" id="statTodayCount">0</div>
+              <div class="stat-sub" id="statTodayUsdt">0 USDT</div>
+            </div>
+            <div class="stat-card success">
+              <div class="stat-label">Today's Payouts</div>
+              <div class="stat-value" id="statTodayLocal">0</div>
+              <div class="stat-sub">Local currency sent</div>
+            </div>
+            <div class="stat-card warning">
+              <div class="stat-label">Pending Payouts</div>
+              <div class="stat-value" id="statPending">0</div>
+              <div class="stat-sub">Awaiting processing</div>
+            </div>
+            <div class="stat-card danger">
+              <div class="stat-label">Today's Fees Earned</div>
+              <div class="stat-value" id="statFees">0</div>
+              <div class="stat-sub">From spread + fees</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Recent Transactions</h3>
+              <button class="btn btn-sm btn-outline" onclick="loadRecentTransactions()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+            <div class="card-body table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>USDT</th>
+                    <th>Rate</th>
+                    <th>Local Amount</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Payout</th>
+                    <th>Time</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="recentTransactionsBody">
+                  <tr><td colspan="9" style="text-align:center;color:#999;">No transactions yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Transactions Section ──────────────────── -->
+        <section class="section" id="sec-transactions">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <div style="display:flex;gap:8px;">
+              <select id="filterStatus" class="form-group" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;">
+                <option value="">All Statuses</option>
+                <option value="detected">Detected</option>
+                <option value="processing">Processing</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+              </select>
+              <button class="btn btn-sm btn-outline" onclick="loadTransactions()">
+                <i class="bi bi-funnel"></i> Filter
+              </button>
+            </div>
+            <button class="btn btn-sm btn-primary" id="btnNewTransaction">
+              <i class="bi bi-plus"></i> Manual Entry
+            </button>
+          </div>
+          <div class="card">
+            <div class="card-body table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Order ID</th>
+                    <th>USDT</th>
+                    <th>Rate</th>
+                    <th>Local Amount</th>
+                    <th>Currency</th>
+                    <th>Phone</th>
+                    <th>Buyer</th>
+                    <th>Status</th>
+                    <th>Payout</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="transactionsBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Browser Section ───────────────────────── -->
+        <section class="section" id="sec-browser">
+          <div class="card">
+            <div class="card-header">
+              <h3>Binance P2P Browser</h3>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm btn-outline" onclick="refreshScreenshot()">
+                  <i class="bi bi-arrow-clockwise"></i> Refresh Screenshot
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <p style="margin-bottom:12px;font-size:13px;color:var(--text-secondary);">
+                The Binance browser runs on the server. Below is a live screenshot of what the monitor sees.
+                For full interactive access, connect via noVNC at port <strong>6080</strong>.
+              </p>
+              <div class="browser-view">
+                <img id="browserScreenshot" src="/api/monitor/screenshot" alt="Browser view"
+                     onerror="this.style.display='none';document.getElementById('browserPlaceholder').style.display='flex';">
+                <div class="browser-placeholder" id="browserPlaceholder">
+                  <div style="text-align:center;">
+                    <i class="bi bi-display" style="font-size:48px;opacity:0.3;"></i>
+                    <p style="margin-top:8px;">Start the monitor to see browser view</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Settings Section ──────────────────────── -->
+        <section class="section" id="sec-settings">
+          <div class="settings-grid">
+            <div class="card">
+              <div class="card-header"><h3>Exchange Rates</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label>UGX per 1 USDT</label>
+                  <input type="number" id="setRateUGX" step="1">
+                </div>
+                <div class="form-group">
+                  <label>KES per 1 USDT</label>
+                  <input type="number" id="setRateKES" step="0.1">
+                </div>
+                <div class="form-group">
+                  <label>TZS per 1 USDT</label>
+                  <input type="number" id="setRateTZS" step="1">
+                </div>
+                <button class="btn btn-primary" onclick="saveRates()">Save Rates</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Fee Settings</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label>Fee Percentage (%)</label>
+                  <input type="number" id="setFeePercent" step="0.1" min="0" max="20">
+                </div>
+                <div class="form-group">
+                  <label>Default Currency</label>
+                  <select id="setDefaultCurrency">
+                    <option value="UGX">UGX - Uganda Shilling</option>
+                    <option value="KES">KES - Kenya Shilling</option>
+                    <option value="TZS">TZS - Tanzania Shilling</option>
+                  </select>
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Telegram</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label>Notifications Enabled</label>
+                  <select id="setTelegramEnabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+                <button class="btn btn-outline" onclick="sendDailySummary()" style="margin-left:8px;">
+                  <i class="bi bi-send"></i> Send Summary
+                </button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Monitor Settings</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label>Poll Interval (ms)</label>
+                  <input type="number" id="setMonitorInterval" step="1000" min="5000">
+                </div>
+                <div class="form-group">
+                  <label>Auto Release USDT</label>
+                  <select id="setAutoRelease">
+                    <option value="false">Manual</option>
+                    <option value="true">Automatic</option>
+                  </select>
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Activity Log Section ──────────────────── -->
+        <section class="section" id="sec-activity">
+          <div class="card">
+            <div class="card-header">
+              <h3>Activity Log</h3>
+              <button class="btn btn-sm btn-outline" onclick="loadActivity()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+            <div class="card-body table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Order</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody id="activityBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Manual Transaction Modal -->
+  <div class="modal-overlay" id="newTxModal" style="display:none;">
+    <div class="modal">
+      <h3>Add Transaction Manually</h3>
+      <div class="form-group">
+        <label>Binance Order ID</label>
+        <input type="text" id="txOrderId" placeholder="e.g., 1234567890123456789">
+      </div>
+      <div class="form-group">
+        <label>USDT Amount</label>
+        <input type="number" id="txUsdtAmount" step="0.01" placeholder="e.g., 100">
+      </div>
+      <div class="form-group">
+        <label>Customer Phone</label>
+        <input type="text" id="txPhone" placeholder="e.g., +256700123456">
+      </div>
+      <div class="form-group">
+        <label>Customer Name</label>
+        <input type="text" id="txName" placeholder="Optional">
+      </div>
+      <div class="form-group">
+        <label>Currency</label>
+        <select id="txCurrency">
+          <option value="UGX">UGX</option>
+          <option value="KES">KES</option>
+          <option value="TZS">TZS</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeModal('newTxModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="createTransaction()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Set Phone Modal -->
+  <div class="modal-overlay" id="phoneModal" style="display:none;">
+    <div class="modal">
+      <h3>Set Customer Phone</h3>
+      <div class="form-group">
+        <label>Phone Number</label>
+        <input type="text" id="phoneInput" placeholder="+256700123456">
+      </div>
+      <input type="hidden" id="phoneTxId">
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeModal('phoneModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="savePhone()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

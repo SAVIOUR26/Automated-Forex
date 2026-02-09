@@ -1,0 +1,452 @@
+// ─── NgaboPay Dashboard JavaScript ────────────────────────
+
+const API = '/api';
+
+// ─── WebSocket Connection ─────────────────────────────────
+
+let ws;
+let wsReconnectTimer;
+
+function connectWebSocket() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    console.log('[WS] Connected');
+    clearTimeout(wsReconnectTimer);
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      handleWsMessage(msg);
+    } catch (e) {
+      console.error('[WS] Parse error:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log('[WS] Disconnected, reconnecting...');
+    wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function handleWsMessage(msg) {
+  switch (msg.type) {
+    case 'new_transaction':
+      showToast(`New order detected: ${msg.data.usdt_amount} USDT`, 'success');
+      loadDashboardStats();
+      loadRecentTransactions();
+      break;
+    case 'monitor_status':
+      updateMonitorUI(msg.data.isRunning);
+      break;
+    case 'monitor_error':
+      showToast(`Monitor error: ${msg.data.message}`, 'error');
+      break;
+  }
+}
+
+// ─── API Helpers ──────────────────────────────────────────
+
+async function apiFetch(url, options = {}) {
+  const res = await fetch(API + url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+  if (res.status === 401) {
+    window.location.href = '/login';
+    return null;
+  }
+  return res.json();
+}
+
+// ─── Navigation ───────────────────────────────────────────
+
+const sections = {
+  dashboard: 'Dashboard',
+  transactions: 'Transactions',
+  browser: 'Binance Browser',
+  settings: 'Settings',
+  activity: 'Activity Log',
+};
+
+document.querySelectorAll('.nav-item[data-section]').forEach(item => {
+  item.addEventListener('click', () => {
+    const section = item.dataset.section;
+    showSection(section);
+  });
+});
+
+function showSection(name) {
+  // Update nav
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelector(`.nav-item[data-section="${name}"]`)?.classList.add('active');
+
+  // Show section
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById(`sec-${name}`)?.classList.add('active');
+
+  // Update title
+  document.getElementById('pageTitle').textContent = sections[name] || name;
+
+  // Load data for section
+  switch (name) {
+    case 'dashboard': loadDashboardStats(); loadRecentTransactions(); break;
+    case 'transactions': loadTransactions(); break;
+    case 'browser': refreshScreenshot(); break;
+    case 'settings': loadSettings(); break;
+    case 'activity': loadActivity(); break;
+  }
+
+  // Close mobile sidebar
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+// ─── Dashboard Stats ──────────────────────────────────────
+
+async function loadDashboardStats() {
+  const stats = await apiFetch('/stats');
+  if (!stats) return;
+
+  document.getElementById('statTodayCount').textContent = stats.today.count;
+  document.getElementById('statTodayUsdt').textContent = `${stats.today.usdt} USDT`;
+  document.getElementById('statTodayLocal').textContent = Number(stats.today.local_total).toLocaleString();
+  document.getElementById('statPending').textContent = stats.pending;
+  document.getElementById('statFees').textContent = Number(stats.today.fees).toLocaleString();
+
+  updateMonitorUI(stats.monitor.isRunning);
+}
+
+// ─── Transactions ─────────────────────────────────────────
+
+async function loadRecentTransactions() {
+  const data = await apiFetch('/transactions?limit=10');
+  if (!data) return;
+  renderTransactions(data, 'recentTransactionsBody');
+}
+
+async function loadTransactions() {
+  const status = document.getElementById('filterStatus').value;
+  let url = '/transactions?limit=100';
+  if (status) url += `&status=${status}`;
+
+  const data = await apiFetch(url);
+  if (!data) return;
+  renderTransactions(data, 'transactionsBody', true);
+}
+
+function renderTransactions(transactions, bodyId, showAll = false) {
+  const body = document.getElementById(bodyId);
+
+  if (!transactions.length) {
+    body.innerHTML = `<tr><td colspan="${showAll ? 12 : 9}" style="text-align:center;color:#999;">No transactions found</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = transactions.map(tx => `
+    <tr>
+      ${showAll ? `<td>${tx.id}</td>` : ''}
+      <td><code style="font-size:11px;">${tx.binance_order_id.substring(0, 12)}...</code></td>
+      <td><strong>${tx.usdt_amount}</strong></td>
+      <td>${Number(tx.exchange_rate).toLocaleString()}</td>
+      <td><strong>${Number(tx.local_amount).toLocaleString()}</strong></td>
+      ${showAll ? `<td>${tx.local_currency}</td>` : ''}
+      <td>${tx.customer_phone || '<button class="btn btn-sm btn-outline" onclick="openPhoneModal(${tx.id})">Set</button>'}</td>
+      ${showAll ? `<td>${tx.buyer_binance_name || '-'}</td>` : ''}
+      <td><span class="badge badge-${tx.status}">${tx.status}</span></td>
+      <td><span class="badge badge-${tx.payout_status}">${tx.payout_status}</span></td>
+      <td style="font-size:11px;">${formatTime(tx.created_at)}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          ${tx.status === 'detected' && tx.payout_status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Process"><i class="bi bi-send"></i></button>` : ''}
+          ${tx.status === 'processing' ? `<button class="btn btn-sm btn-success" onclick="markComplete(${tx.id})" title="Complete"><i class="bi bi-check"></i></button>` : ''}
+          ${!tx.usdt_released && tx.status === 'completed' ? `<button class="btn btn-sm btn-warning" onclick="releaseUsdt(${tx.id})" title="Release USDT"><i class="bi bi-unlock"></i></button>` : ''}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// ─── Transaction Actions ──────────────────────────────────
+
+async function createTransaction() {
+  const data = {
+    binance_order_id: document.getElementById('txOrderId').value,
+    usdt_amount: document.getElementById('txUsdtAmount').value,
+    customer_phone: document.getElementById('txPhone').value || undefined,
+    customer_name: document.getElementById('txName').value || undefined,
+    local_currency: document.getElementById('txCurrency').value,
+  };
+
+  if (!data.binance_order_id || !data.usdt_amount) {
+    showToast('Order ID and USDT amount are required', 'error');
+    return;
+  }
+
+  const result = await apiFetch('/transactions', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+  if (result && result.id) {
+    showToast('Transaction created', 'success');
+    closeModal('newTxModal');
+    loadTransactions();
+    loadDashboardStats();
+  } else {
+    showToast(result?.error || 'Failed to create transaction', 'error');
+  }
+}
+
+async function markProcessing(id) {
+  await apiFetch('/payout/start', { method: 'POST', body: JSON.stringify({ transaction_id: id }) });
+  showToast('Marked as processing', 'success');
+  loadRecentTransactions();
+  loadTransactions();
+}
+
+async function markComplete(id) {
+  const ref = prompt('Enter payout reference (optional):') || 'manual';
+  await apiFetch('/payout/complete', { method: 'POST', body: JSON.stringify({ transaction_id: id, reference: ref }) });
+  showToast('Payout completed', 'success');
+  loadRecentTransactions();
+  loadTransactions();
+  loadDashboardStats();
+}
+
+async function releaseUsdt(id) {
+  if (!confirm('Mark USDT as released on Binance?')) return;
+  await apiFetch(`/transactions/${id}/release`, { method: 'POST' });
+  showToast('USDT marked as released', 'success');
+  loadRecentTransactions();
+  loadTransactions();
+}
+
+function openPhoneModal(txId) {
+  document.getElementById('phoneTxId').value = txId;
+  document.getElementById('phoneInput').value = '';
+  document.getElementById('phoneModal').style.display = 'flex';
+}
+
+async function savePhone() {
+  const id = document.getElementById('phoneTxId').value;
+  const phone = document.getElementById('phoneInput').value;
+  if (!phone) { showToast('Phone required', 'error'); return; }
+
+  await apiFetch(`/transactions/${id}/phone`, {
+    method: 'PUT',
+    body: JSON.stringify({ phone }),
+  });
+  showToast('Phone saved', 'success');
+  closeModal('phoneModal');
+  loadRecentTransactions();
+  loadTransactions();
+}
+
+// ─── Monitor Control ──────────────────────────────────────
+
+document.getElementById('btnStartMonitor').addEventListener('click', async () => {
+  showToast('Starting monitor...', 'warning');
+  const result = await apiFetch('/monitor/start', { method: 'POST' });
+  if (result?.success) {
+    updateMonitorUI(true);
+    showToast('Monitor started', 'success');
+  } else {
+    showToast(result?.error || 'Failed to start monitor', 'error');
+  }
+});
+
+document.getElementById('btnStopMonitor').addEventListener('click', async () => {
+  const result = await apiFetch('/monitor/stop', { method: 'POST' });
+  if (result?.success) {
+    updateMonitorUI(false);
+    showToast('Monitor stopped');
+  }
+});
+
+function updateMonitorUI(isRunning) {
+  const dots = [document.getElementById('monitorDot'), document.getElementById('topMonitorDot')];
+  const labels = [document.getElementById('monitorLabel'), document.getElementById('topMonitorLabel')];
+  const startBtn = document.getElementById('btnStartMonitor');
+  const stopBtn = document.getElementById('btnStopMonitor');
+
+  dots.forEach(d => d?.classList.toggle('active', isRunning));
+  labels.forEach(l => { if (l) l.textContent = isRunning ? 'Monitor: Active' : 'Monitor: Off'; });
+  startBtn.style.display = isRunning ? 'none' : '';
+  stopBtn.style.display = isRunning ? '' : 'none';
+}
+
+// ─── Browser Screenshot ───────────────────────────────────
+
+function refreshScreenshot() {
+  const img = document.getElementById('browserScreenshot');
+  const placeholder = document.getElementById('browserPlaceholder');
+  const ts = Date.now();
+  img.src = `/api/monitor/screenshot?t=${ts}`;
+  img.style.display = '';
+  placeholder.style.display = 'none';
+
+  img.onerror = () => {
+    img.style.display = 'none';
+    placeholder.style.display = 'flex';
+  };
+}
+
+// Auto-refresh screenshot every 15 seconds when on browser section
+setInterval(() => {
+  if (document.getElementById('sec-browser').classList.contains('active')) {
+    refreshScreenshot();
+  }
+}, 15000);
+
+// ─── Settings ─────────────────────────────────────────────
+
+async function loadSettings() {
+  const settings = await apiFetch('/settings');
+  if (!settings) return;
+
+  document.getElementById('setRateUGX').value = settings.rate_UGX || '';
+  document.getElementById('setRateKES').value = settings.rate_KES || '';
+  document.getElementById('setRateTZS').value = settings.rate_TZS || '';
+  document.getElementById('setFeePercent').value = settings.fee_percent || '';
+  document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
+  document.getElementById('setTelegramEnabled').value = settings.telegram_enabled || 'true';
+  document.getElementById('setMonitorInterval').value = settings.monitor_interval_ms || '10000';
+  document.getElementById('setAutoRelease').value = settings.auto_release_usdt || 'false';
+}
+
+async function saveRates() {
+  const rates = [
+    { currency: 'UGX', rate: document.getElementById('setRateUGX').value },
+    { currency: 'KES', rate: document.getElementById('setRateKES').value },
+    { currency: 'TZS', rate: document.getElementById('setRateTZS').value },
+  ];
+
+  for (const { currency, rate } of rates) {
+    if (rate) {
+      await apiFetch('/settings/rate', {
+        method: 'PUT',
+        body: JSON.stringify({ currency, rate: parseFloat(rate) }),
+      });
+    }
+  }
+  showToast('Rates saved', 'success');
+}
+
+async function saveSettings() {
+  const updates = {
+    fee_percent: document.getElementById('setFeePercent').value,
+    default_currency: document.getElementById('setDefaultCurrency').value,
+    telegram_enabled: document.getElementById('setTelegramEnabled').value,
+    monitor_interval_ms: document.getElementById('setMonitorInterval').value,
+    auto_release_usdt: document.getElementById('setAutoRelease').value,
+  };
+
+  await apiFetch('/settings', { method: 'PUT', body: JSON.stringify(updates) });
+  showToast('Settings saved', 'success');
+}
+
+async function sendDailySummary() {
+  await apiFetch('/summary', { method: 'POST' });
+  showToast('Summary sent to Telegram', 'success');
+}
+
+// ─── Activity Log ─────────────────────────────────────────
+
+async function loadActivity() {
+  const data = await apiFetch('/activity?limit=100');
+  if (!data) return;
+
+  const body = document.getElementById('activityBody');
+  if (!data.length) {
+    body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999;">No activity yet</td></tr>';
+    return;
+  }
+
+  body.innerHTML = data.map(log => {
+    let details = '';
+    try { details = log.details ? JSON.stringify(JSON.parse(log.details)) : ''; }
+    catch { details = log.details || ''; }
+
+    return `
+      <tr>
+        <td style="font-size:11px;">${formatTime(log.created_at)}</td>
+        <td><span class="badge badge-detected">${log.action}</span></td>
+        <td>${log.binance_order_id ? `<code style="font-size:11px;">${log.binance_order_id.substring(0, 12)}...</code>` : '-'}</td>
+        <td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;">${details}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ─── Modals ───────────────────────────────────────────────
+
+document.getElementById('btnNewTransaction').addEventListener('click', () => {
+  document.getElementById('newTxModal').style.display = 'flex';
+});
+
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.style.display = 'none';
+  });
+});
+
+// ─── Logout ───────────────────────────────────────────────
+
+document.getElementById('btnLogout').addEventListener('click', async () => {
+  await fetch('/logout', { method: 'POST' });
+  window.location.href = '/login';
+});
+
+// ─── Mobile Menu ──────────────────────────────────────────
+
+const menuToggle = document.getElementById('menuToggle');
+if (window.innerWidth <= 768) menuToggle.style.display = '';
+menuToggle.addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+});
+
+window.addEventListener('resize', () => {
+  menuToggle.style.display = window.innerWidth <= 768 ? '' : 'none';
+});
+
+// ─── Utilities ────────────────────────────────────────────
+
+function formatTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso + 'Z');
+  return d.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function showToast(message, type = '') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
+}
+
+// ─── Init ─────────────────────────────────────────────────
+
+connectWebSocket();
+loadDashboardStats();
+loadRecentTransactions();
+
+// Auto-refresh stats every 30 seconds
+setInterval(() => {
+  if (document.getElementById('sec-dashboard').classList.contains('active')) {
+    loadDashboardStats();
+    loadRecentTransactions();
+  }
+}, 30000);

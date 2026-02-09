@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NgaboPay USSD</string>
+    <string name="accessibility_description">NgaboPay uses accessibility to automate USSD Mobile Money transfers. This is needed to navigate USSD menus for sending payouts.</string>
+</resources>

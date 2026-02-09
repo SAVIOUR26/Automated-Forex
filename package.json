@@ -1,0 +1,35 @@
+{
+  "name": "ngabopay",
+  "version": "1.0.0",
+  "description": "NgaboPay - Automated Forex Exchange System via Binance P2P",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate": "node src/models/migrate.js",
+    "seed": "node src/models/seed.js",
+    "monitor": "node src/services/binanceMonitor.js",
+    "setup": "bash scripts/setup-vps.sh"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "better-sqlite3": "^9.4.3",
+    "playwright": "^1.41.0",
+    "express-session": "^1.17.3",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.3.1",
+    "node-telegram-bot-api": "^0.64.0",
+    "uuid": "^9.0.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^7.1.5",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
