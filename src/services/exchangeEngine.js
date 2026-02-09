@@ -9,7 +9,8 @@ class ExchangeEngine {
 
   /**
    * Process a newly detected Binance P2P order.
-   * Calculates local currency amount, fees, and creates a transaction.
+   * Uses the local currency amount directly from the Binance order page.
+   * No manual rate calculation — Binance already shows the exact fiat amount.
    */
   async processDetectedOrder(order) {
     // Check if already processed
@@ -19,28 +20,26 @@ class ExchangeEngine {
       return existing;
     }
 
-    const currency = Settings.get('default_currency', 'UGX');
-    const rate = Settings.getExchangeRate(currency);
-    const feePercent = Settings.getFeePercent();
-
-    if (!rate || rate <= 0) {
-      console.error(`[ExchangeEngine] No exchange rate configured for ${currency}`);
-      return null;
-    }
-
     const usdtAmount = order.usdtAmount;
-    const grossLocal = usdtAmount * rate;
-    const feeAmount = grossLocal * (feePercent / 100);
-    const localAmount = grossLocal - feeAmount;
+
+    // Use the local amount directly from Binance (no manual rate needed)
+    // Binance P2P order shows exactly how much fiat the buyer is paying
+    const localAmount = order.localAmount || 0;
+    const localCurrency = order.localCurrency || Settings.get('default_currency', 'UGX');
+    const exchangeRate = order.exchangeRate || (localAmount > 0 && usdtAmount > 0 ? Math.round(localAmount / usdtAmount) : 0);
+
+    if (!localAmount || localAmount <= 0) {
+      console.warn(`[ExchangeEngine] Order ${order.orderId}: No local amount detected from Binance, storing with 0`);
+    }
 
     const transaction = Transaction.create({
       binance_order_id: order.orderId,
       usdt_amount: usdtAmount,
-      exchange_rate: rate,
-      local_currency: currency,
+      exchange_rate: exchangeRate,
+      local_currency: localCurrency,
       local_amount: Math.round(localAmount),
-      fee_percent: feePercent,
-      fee_amount: Math.round(feeAmount),
+      fee_percent: 0,
+      fee_amount: 0,
       customer_phone: order.customerPhone || null,
       customer_name: order.customerName || null,
       buyer_binance_name: order.buyerName || null,
@@ -52,11 +51,12 @@ class ExchangeEngine {
       orderId: order.orderId,
       usdtAmount,
       localAmount: Math.round(localAmount),
-      currency,
-      rate,
+      localCurrency,
+      exchangeRate,
+      source: 'binance_p2p',
     }, transaction.id);
 
-    console.log(`[ExchangeEngine] New transaction created: #${transaction.id} - ${usdtAmount} USDT → ${Math.round(localAmount)} ${currency}`);
+    console.log(`[ExchangeEngine] New transaction: #${transaction.id} - ${usdtAmount} USDT = ${Math.round(localAmount)} ${localCurrency}`);
 
     // Send Telegram notification
     if (this.telegram) {
@@ -134,7 +134,8 @@ class ExchangeEngine {
    * Mark USDT as released on Binance
    */
   markUsdtReleased(transactionId) {
-    const transaction = Transaction.updateStatus(transactionId, transaction?.status || 'completed', {
+    const existing = Transaction.findById(transactionId);
+    const transaction = Transaction.updateStatus(transactionId, existing?.status || 'completed', {
       usdt_released: true,
     });
     ActivityLog.log('usdt_released', null, transactionId);

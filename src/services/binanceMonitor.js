@@ -133,8 +133,11 @@ class BinanceMonitor extends EventEmitter {
 
     // Look for "Buyer Paid" / "Paid" status indicators
     // Binance P2P order page shows orders with status badges
+    // Extract both USDT amount and the local currency (UGX/KES/TZS) amount
+    // shown directly on the Binance order — no manual rate calculation needed
     const orders = await this.page.evaluate(() => {
       const results = [];
+      const currencies = ['UGX', 'KES', 'TZS', 'NGN', 'GHS', 'ZAR', 'RWF', 'USD', 'EUR'];
 
       // Strategy 1: Look for order cards/rows with "Paid" status
       const orderElements = document.querySelectorAll('[class*="order"], [class*="Order"], tr, [data-order]');
@@ -154,12 +157,46 @@ class BinanceMonitor extends EventEmitter {
         const usdtMatch = text.match(/([\d,.]+)\s*USDT/i);
         const usdtAmount = usdtMatch ? parseFloat(usdtMatch[1].replace(/,/g, '')) : null;
 
+        // Extract local currency amount + currency code directly from the order
+        // Binance shows something like "375,000 UGX" or "UGX 375,000"
+        let localAmount = null;
+        let localCurrency = null;
+        for (const cur of currencies) {
+          // Match: "375,000.00 UGX" or "UGX 375,000.00"
+          const amountAfter = text.match(new RegExp('([\\d,]+(?:\\.\\d+)?)\\s*' + cur, 'i'));
+          const amountBefore = text.match(new RegExp(cur + '\\s*([\\d,]+(?:\\.\\d+)?)', 'i'));
+          const match = amountAfter || amountBefore;
+          if (match) {
+            const parsed = parseFloat(match[1].replace(/,/g, ''));
+            // Pick the largest local amount (the fiat total, not the price-per-unit)
+            if (parsed > 0 && (!localAmount || parsed > localAmount)) {
+              localAmount = parsed;
+              localCurrency = cur;
+            }
+          }
+        }
+
+        // Extract price/rate (e.g., "Price 3,750 UGX")
+        let exchangeRate = null;
+        const priceMatch = text.match(/price[:\s]*([\d,]+(?:\.\d+)?)/i);
+        if (priceMatch) {
+          exchangeRate = parseFloat(priceMatch[1].replace(/,/g, ''));
+        }
+
         // Extract buyer name
         const nameEl = el.querySelector('[class*="name"], [class*="Name"], [class*="nick"]');
         const buyerName = nameEl ? nameEl.textContent.trim() : null;
 
         if (orderId && usdtAmount) {
-          results.push({ orderId, usdtAmount, buyerName, rawText: text.substring(0, 500) });
+          results.push({
+            orderId,
+            usdtAmount,
+            localAmount,
+            localCurrency,
+            exchangeRate,
+            buyerName,
+            rawText: text.substring(0, 800),
+          });
         }
       }
 
@@ -178,11 +215,30 @@ class BinanceMonitor extends EventEmitter {
             const usdtMatch = parentText.match(/([\d,.]+)\s*USDT/i);
 
             if (orderIdMatch && usdtMatch) {
+              // Extract local amount from parent
+              let localAmount = null;
+              let localCurrency = null;
+              for (const cur of currencies) {
+                const amountAfter = parentText.match(new RegExp('([\\d,]+(?:\\.\\d+)?)\\s*' + cur, 'i'));
+                const amountBefore = parentText.match(new RegExp(cur + '\\s*([\\d,]+(?:\\.\\d+)?)', 'i'));
+                const match = amountAfter || amountBefore;
+                if (match) {
+                  const parsed = parseFloat(match[1].replace(/,/g, ''));
+                  if (parsed > 0 && (!localAmount || parsed > localAmount)) {
+                    localAmount = parsed;
+                    localCurrency = cur;
+                  }
+                }
+              }
+
               results.push({
                 orderId: orderIdMatch[1],
                 usdtAmount: parseFloat(usdtMatch[1].replace(/,/g, '')),
+                localAmount,
+                localCurrency,
+                exchangeRate: null,
                 buyerName: null,
-                rawText: parentText.substring(0, 500),
+                rawText: parentText.substring(0, 800),
               });
               break;
             }

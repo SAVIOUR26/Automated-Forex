@@ -42,6 +42,10 @@ function broadcast(type, data) {
 }
 
 // ─── Security & Middleware ───────────────────────────────
+
+// Trust Nginx reverse proxy (fixes X-Forwarded-For and secure cookies)
+app.set('trust proxy', 1);
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -65,19 +69,24 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production' && false, // Set true if behind HTTPS proxy
+    secure: false, // Nginx handles HTTPS termination
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
 }));
 
-// Rate limit login attempts
+// Rate limit login POST attempts only (not redirects to login page)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 20,
   message: { error: 'Too many login attempts' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use('/login', loginLimiter);
+app.use('/login', (req, res, next) => {
+  if (req.method === 'POST') return loginLimiter(req, res, next);
+  next();
+});
 
 // ─── Initialize Services ────────────────────────────────
 const telegram = new TelegramNotifier(
@@ -111,18 +120,29 @@ monitor.on('monitoring_stopped', () => broadcast('monitor_status', { isRunning: 
 monitor.on('error', (err) => broadcast('monitor_error', { message: err.message }));
 
 // ─── Routes ─────────────────────────────────────────────
+
+// Auth routes (login/logout) - no auth required
 app.use('/', authRoutes);
+
+// Static assets (CSS, JS, images) - no auth required
+app.use('/css', express.static(path.join(__dirname, '..', 'public', 'css')));
+app.use('/js', express.static(path.join(__dirname, '..', 'public', 'js')));
+app.use('/img', express.static(path.join(__dirname, '..', 'public', 'img')));
+
+// API routes - auth checked per-route
 app.use('/api', apiRoutes(app));
 
-// Serve static files (dashboard)
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// Login page - no auth required
+app.get('/login', (req, res) => {
+  res.sendFile('login.html', { root: path.join(__dirname, '..', 'public') });
+});
 
-// Dashboard route (protected)
+// Dashboard - auth required
 app.get('/', requireAuth, (req, res) => {
   res.sendFile('index.html', { root: path.join(__dirname, '..', 'public') });
 });
 
-// Catch-all for SPA-style routing
+// All other routes - auth required, serve dashboard
 app.get('*', requireAuth, (req, res) => {
   res.sendFile('index.html', { root: path.join(__dirname, '..', 'public') });
 });
