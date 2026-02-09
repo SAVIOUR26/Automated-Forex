@@ -169,19 +169,45 @@
 
         <!-- ─── Browser Section ───────────────────────── -->
         <section class="section" id="sec-browser">
-          <div class="card">
+          <!-- View Mode Toggle -->
+          <div style="display:flex;gap:8px;margin-bottom:16px;">
+            <button class="btn btn-sm btn-primary" id="btnViewInteractive" onclick="showBrowserView('interactive')">
+              <i class="bi bi-mouse"></i> Interactive (noVNC)
+            </button>
+            <button class="btn btn-sm btn-outline" id="btnViewScreenshot" onclick="showBrowserView('screenshot')">
+              <i class="bi bi-image"></i> Screenshot Only
+            </button>
+          </div>
+
+          <!-- Interactive noVNC View -->
+          <div class="card" id="browserInteractive">
             <div class="card-header">
-              <h3>Binance P2P Browser</h3>
-              <div style="display:flex;gap:8px;">
-                <button class="btn btn-sm btn-outline" onclick="refreshScreenshot()">
-                  <i class="bi bi-arrow-clockwise"></i> Refresh Screenshot
-                </button>
+              <h3>Live Browser - Interactive Control</h3>
+              <span class="badge badge-processing">Mouse + Keyboard Active</span>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <p style="padding:12px 18px 0;font-size:13px;color:var(--text-secondary);">
+                Full interactive control of the Chromium browser on the VPS. Use this to <strong>log into Binance</strong>, navigate P2P, and manage orders.
+              </p>
+              <div class="browser-view" style="margin:12px;min-height:600px;">
+                <iframe id="novncFrame" src="/novnc/vnc.html?autoconnect=true&resize=scale"
+                        style="width:100%;height:650px;border:none;"
+                        allow="clipboard-read; clipboard-write"></iframe>
               </div>
+            </div>
+          </div>
+
+          <!-- Screenshot View -->
+          <div class="card" id="browserScreenshotCard" style="display:none;">
+            <div class="card-header">
+              <h3>Browser Screenshot</h3>
+              <button class="btn btn-sm btn-outline" onclick="refreshScreenshot()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
             </div>
             <div class="card-body">
               <p style="margin-bottom:12px;font-size:13px;color:var(--text-secondary);">
-                The Binance browser runs on the server. Below is a live screenshot of what the monitor sees.
-                For full interactive access, connect via noVNC at port <strong>6080</strong>.
+                Static screenshot of what the monitor sees. Auto-refreshes every 15 seconds.
               </p>
               <div class="browser-view">
                 <img id="browserScreenshot" src="/api/monitor/screenshot" alt="Browser view"

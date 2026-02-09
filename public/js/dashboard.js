@@ -279,6 +279,28 @@ function updateMonitorUI(isRunning) {
   stopBtn.style.display = isRunning ? '' : 'none';
 }
 
+// ─── Browser View Toggle ──────────────────────────────────
+
+function showBrowserView(mode) {
+  const interactive = document.getElementById('browserInteractive');
+  const screenshot = document.getElementById('browserScreenshotCard');
+  const btnInteractive = document.getElementById('btnViewInteractive');
+  const btnScreenshot = document.getElementById('btnViewScreenshot');
+
+  if (mode === 'interactive') {
+    interactive.style.display = '';
+    screenshot.style.display = 'none';
+    btnInteractive.className = 'btn btn-sm btn-primary';
+    btnScreenshot.className = 'btn btn-sm btn-outline';
+  } else {
+    interactive.style.display = 'none';
+    screenshot.style.display = '';
+    btnInteractive.className = 'btn btn-sm btn-outline';
+    btnScreenshot.className = 'btn btn-sm btn-primary';
+    refreshScreenshot();
+  }
+}
+
 // ─── Browser Screenshot ───────────────────────────────────
 
 function refreshScreenshot() {
