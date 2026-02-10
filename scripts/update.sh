@@ -42,8 +42,10 @@ npm install --production
 echo "[4/5] Running database migrations..."
 node -e "require('./src/models/migrate').migrate(); require('./src/models/seed').seed(); console.log('DB ready.');"
 
-# Set ownership
-chown -R ngabopay:ngabopay "$APP_DIR"
+# Set ownership (only if ngabopay user exists)
+if id ngabopay &>/dev/null; then
+  chown -R ngabopay:ngabopay "$APP_DIR"
+fi
 
 # Restart services
 echo "[5/5] Restarting services..."
