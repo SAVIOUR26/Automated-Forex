@@ -7,3 +7,10 @@ playwright/.auth/
 browser-data/
 .cache/
 dist/
+
+# Android/Gradle build caches
+.gradle/
+android-app/.gradle/
+android-app/app/build/
+android-app/build/
+local.properties
