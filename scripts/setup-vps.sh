@@ -80,7 +80,8 @@ echo "[5/8] Creating systemd services..."
 cat > /etc/systemd/system/ngabopay.service << 'SERVICEEOF'
 [Unit]
 Description=NgaboPay Forex Exchange
-After=network.target
+After=network.target ngabopay-xvfb.service
+Requires=ngabopay-xvfb.service
 
 [Service]
 Type=simple
@@ -90,6 +91,7 @@ ExecStart=/usr/bin/node src/server.js
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
+Environment=DISPLAY=:99
 EnvironmentFile=/opt/ngabopay/.env
 
 # Logging
@@ -100,7 +102,7 @@ SyslogIdentifier=ngabopay
 # Security
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/ngabopay/data /opt/ngabopay/browser-data
+ReadWritePaths=/opt/ngabopay/data /opt/ngabopay/browser-data /tmp /home/ngabopay
 
 [Install]
 WantedBy=multi-user.target
