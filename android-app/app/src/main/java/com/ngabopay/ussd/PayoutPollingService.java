@@ -30,6 +30,7 @@ public class PayoutPollingService extends Service {
     private String provider;
     private boolean isRunning = false;
 
+    private int completedPayouts = 0;
     private static PayoutPollingService instance;
 
     @Override
@@ -57,8 +58,33 @@ public class PayoutPollingService extends Service {
         return START_STICKY;
     }
 
+    private void sendHeartbeat() {
+        if (serverUrl == null || apiKey == null) return;
+
+        String json = gson.toJson(new HeartbeatPayload(
+            android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL,
+            isRunning,
+            completedPayouts
+        ));
+
+        RequestBody body = RequestBody.create(json, MediaType.parse("application/json"));
+        Request request = new Request.Builder()
+            .url(serverUrl + "/api/phone/heartbeat")
+            .addHeader("X-API-Key", apiKey)
+            .post(body)
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {}
+            @Override public void onResponse(Call call, Response response) { response.close(); }
+        });
+    }
+
     private void pollForPayouts() {
         if (!isRunning) return;
+
+        // Send heartbeat with every poll
+        sendHeartbeat();
 
         log("Polling for pending payouts...");
 
@@ -169,6 +195,7 @@ public class PayoutPollingService extends Service {
         if ("failed".equals(action)) {
             json = gson.toJson(new PayoutUpdate(transactionId, reason, null));
         } else if ("complete".equals(action)) {
+            completedPayouts++;
             json = gson.toJson(new PayoutUpdate(transactionId, null, reference));
         } else {
             json = gson.toJson(new PayoutUpdate(transactionId, null, null));
@@ -253,6 +280,18 @@ public class PayoutPollingService extends Service {
             this.transaction_id = id;
             this.reason = reason;
             this.reference = reference;
+        }
+    }
+
+    private static class HeartbeatPayload {
+        String device;
+        boolean is_polling;
+        int payouts_completed;
+
+        HeartbeatPayload(String device, boolean is_polling, int payouts_completed) {
+            this.device = device;
+            this.is_polling = is_polling;
+            this.payouts_completed = payouts_completed;
         }
     }
 }

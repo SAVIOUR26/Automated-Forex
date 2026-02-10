@@ -38,9 +38,10 @@ public class UssdAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Only process USSD dialogs from the phone app
+        // Only process USSD dialogs from the phone/dialer app
         String packageName = event.getPackageName() != null ? event.getPackageName().toString() : "";
-        if (!packageName.contains("phone") && !packageName.contains("dialer")) {
+        if (!packageName.contains("phone") && !packageName.contains("dialer") &&
+            !packageName.contains("telecom") && !packageName.contains("incallui")) {
             return;
         }
 

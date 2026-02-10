@@ -249,6 +249,39 @@ module.exports = function(app) {
     res.json(transaction);
   });
 
+  // ─── Phone App Heartbeat / Status ─────────────────────
+  // The Android app sends heartbeats so the dashboard can show connection status
+  let phoneStatus = {
+    connected: false,
+    last_seen: null,
+    device: null,
+    is_polling: false,
+    payouts_completed: 0,
+  };
+
+  router.post('/phone/heartbeat', requireApiKey, express.json(), (req, res) => {
+    const { device, is_polling, payouts_completed } = req.body;
+    phoneStatus = {
+      connected: true,
+      last_seen: new Date().toISOString(),
+      device: device || 'Android',
+      is_polling: is_polling || false,
+      payouts_completed: payouts_completed || phoneStatus.payouts_completed,
+    };
+    res.json({ success: true });
+  });
+
+  router.get('/phone/status', requireAuth, (req, res) => {
+    // Mark disconnected if no heartbeat in last 60 seconds
+    if (phoneStatus.last_seen) {
+      const elapsed = Date.now() - new Date(phoneStatus.last_seen).getTime();
+      if (elapsed > 60000) {
+        phoneStatus.connected = false;
+      }
+    }
+    res.json(phoneStatus);
+  });
+
   // ─── Daily Summary ─────────────────────────────────────
   router.post('/summary', requireAuth, async (req, res) => {
     const stats = Transaction.getStats();

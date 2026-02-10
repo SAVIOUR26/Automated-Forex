@@ -383,46 +383,52 @@ setInterval(() => {
 
 // ─── Settings ─────────────────────────────────────────────
 
+const USSD_PATTERNS = {
+  mtn_ug: '*165*1*{phone}*{amount}#',
+  airtel_ug: '*185*1*{phone}*{amount}#',
+  mpesa_ke: '*150*00#',
+  tigo_tz: '*150*01*{phone}*{amount}#',
+  custom: '',
+};
+
 async function loadSettings() {
   const settings = await apiFetch('/settings');
   if (!settings) return;
 
-  document.getElementById('setRateUGX').value = settings.rate_UGX || '';
-  document.getElementById('setRateKES').value = settings.rate_KES || '';
-  document.getElementById('setRateTZS').value = settings.rate_TZS || '';
-  document.getElementById('setFeePercent').value = settings.fee_percent || '';
-  document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
+  document.getElementById('setTelegramToken').value = settings.telegram_bot_token || '';
+  document.getElementById('setTelegramChatId').value = settings.telegram_chat_id || '';
   document.getElementById('setTelegramEnabled').value = settings.telegram_enabled || 'true';
+  document.getElementById('setUssdProvider').value = settings.ussd_provider || 'mtn_ug';
+  document.getElementById('setUssdPattern').value = settings.ussd_pattern || USSD_PATTERNS['mtn_ug'];
+  document.getElementById('setUssdPin').value = settings.ussd_pin ? '****' : '';
   document.getElementById('setMonitorInterval').value = settings.monitor_interval_ms || '10000';
-  document.getElementById('setAutoRelease').value = settings.auto_release_usdt || 'false';
+  document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
+
+  // Load phone status
+  loadPhoneStatus();
 }
 
-async function saveRates() {
-  const rates = [
-    { currency: 'UGX', rate: document.getElementById('setRateUGX').value },
-    { currency: 'KES', rate: document.getElementById('setRateKES').value },
-    { currency: 'TZS', rate: document.getElementById('setRateTZS').value },
-  ];
-
-  for (const { currency, rate } of rates) {
-    if (rate) {
-      await apiFetch('/settings/rate', {
-        method: 'PUT',
-        body: JSON.stringify({ currency, rate: parseFloat(rate) }),
-      });
-    }
-  }
-  showToast('Rates saved', 'success');
+function updateUssdPattern() {
+  const provider = document.getElementById('setUssdProvider').value;
+  const pattern = USSD_PATTERNS[provider] || '';
+  document.getElementById('setUssdPattern').value = pattern;
 }
 
 async function saveSettings() {
+  const pin = document.getElementById('setUssdPin').value;
   const updates = {
-    fee_percent: document.getElementById('setFeePercent').value,
-    default_currency: document.getElementById('setDefaultCurrency').value,
+    telegram_bot_token: document.getElementById('setTelegramToken').value,
+    telegram_chat_id: document.getElementById('setTelegramChatId').value,
     telegram_enabled: document.getElementById('setTelegramEnabled').value,
+    ussd_provider: document.getElementById('setUssdProvider').value,
+    ussd_pattern: document.getElementById('setUssdPattern').value,
     monitor_interval_ms: document.getElementById('setMonitorInterval').value,
-    auto_release_usdt: document.getElementById('setAutoRelease').value,
+    default_currency: document.getElementById('setDefaultCurrency').value,
   };
+  // Only save PIN if changed (not the masked ****)
+  if (pin && pin !== '****') {
+    updates.ussd_pin = pin;
+  }
 
   await apiFetch('/settings', { method: 'PUT', body: JSON.stringify(updates) });
   showToast('Settings saved', 'success');
@@ -431,6 +437,34 @@ async function saveSettings() {
 async function sendDailySummary() {
   await apiFetch('/summary', { method: 'POST' });
   showToast('Summary sent to Telegram', 'success');
+}
+
+// ─── Phone App Status ─────────────────────────────────────
+
+async function loadPhoneStatus() {
+  const data = await apiFetch('/phone/status');
+  if (!data) return;
+
+  const badge = document.getElementById('phoneStatusBadge');
+  const lastSeen = document.getElementById('phoneLastSeen');
+  const device = document.getElementById('phoneDevice');
+  const payouts = document.getElementById('phonePayouts');
+  const polling = document.getElementById('phonePolling');
+
+  if (data.connected) {
+    badge.textContent = 'Connected';
+    badge.style.background = '#e6f4ea';
+    badge.style.color = 'var(--success)';
+  } else {
+    badge.textContent = 'Disconnected';
+    badge.style.background = '#f1f3f4';
+    badge.style.color = 'var(--text-secondary)';
+  }
+
+  lastSeen.textContent = data.last_seen ? formatTime(data.last_seen) : 'Never';
+  device.textContent = data.device || '--';
+  payouts.textContent = data.payouts_completed || '0';
+  polling.textContent = data.is_polling ? 'Polling Active' : 'Idle';
 }
 
 // ─── Activity Log ─────────────────────────────────────────

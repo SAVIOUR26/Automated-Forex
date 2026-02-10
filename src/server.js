@@ -115,8 +115,8 @@ monitor.on('order_detected', async (order) => {
   }
 });
 
-monitor.on('monitoring_started', () => broadcast('monitor_status', { isRunning: true }));
-monitor.on('monitoring_stopped', () => broadcast('monitor_status', { isRunning: false }));
+monitor.on('monitoring_started', () => broadcast('monitor_status', { isRunning: true, browserLaunched: true }));
+monitor.on('monitoring_stopped', () => broadcast('monitor_status', { isRunning: false, browserLaunched: !!monitor.browser }));
 monitor.on('error', (err) => broadcast('monitor_error', { message: err.message }));
 
 // ─── Routes ─────────────────────────────────────────────

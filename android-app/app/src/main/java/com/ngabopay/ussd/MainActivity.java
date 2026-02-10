@@ -13,7 +13,7 @@ import com.google.android.material.textfield.TextInputEditText;
 
 public class MainActivity extends AppCompatActivity {
 
-    private TextInputEditText etServerUrl, etApiKey;
+    private TextInputEditText etServerUrl, etApiKey, etMmPin;
     private AutoCompleteTextView spProvider;
     private TextView tvStatus, tvLastAction, tvLog;
     private MaterialButton btnStart, btnStop, btnAccessibility;
@@ -33,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
 
         etServerUrl = findViewById(R.id.etServerUrl);
         etApiKey = findViewById(R.id.etApiKey);
+        etMmPin = findViewById(R.id.etMmPin);
         spProvider = findViewById(R.id.spProvider);
         tvStatus = findViewById(R.id.tvStatus);
         tvLastAction = findViewById(R.id.tvLastAction);
@@ -49,6 +50,7 @@ public class MainActivity extends AppCompatActivity {
         // Load saved settings
         etServerUrl.setText(prefs.getString("server_url", ""));
         etApiKey.setText(prefs.getString("api_key", ""));
+        etMmPin.setText(prefs.getString("mm_pin", ""));
         spProvider.setText(prefs.getString("provider", "MTN Mobile Money (Uganda)"), false);
 
         // Start polling
@@ -71,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
         prefs.edit()
             .putString("server_url", etServerUrl.getText().toString().trim())
             .putString("api_key", etApiKey.getText().toString().trim())
+            .putString("mm_pin", etMmPin.getText().toString().trim())
             .putString("provider", spProvider.getText().toString().trim())
             .apply();
     }
@@ -83,6 +86,13 @@ public class MainActivity extends AppCompatActivity {
             addLog("ERROR: Server URL and API Key are required");
             return;
         }
+
+        // Set the Mobile Money PIN for USSD automation
+        String mmPin = etMmPin.getText().toString().trim();
+        if (mmPin.isEmpty()) {
+            addLog("WARNING: Mobile Money PIN not set. USSD will fail at PIN prompt.");
+        }
+        UssdAccessibilityService.setPin(mmPin);
 
         Intent intent = new Intent(this, PayoutPollingService.class);
         intent.putExtra("server_url", serverUrl);
