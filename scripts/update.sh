@@ -7,14 +7,20 @@
 set -e
 
 APP_DIR="/opt/ngabopay"
-BRANCH="${1:-main}"
+
+cd "$APP_DIR"
+
+# Auto-detect current branch, or use argument, or default to main
+if [ -n "$1" ]; then
+  BRANCH="$1"
+else
+  BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+fi
 
 echo "╔══════════════════════════════════════╗"
 echo "║     NgaboPay System Update           ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
-
-cd "$APP_DIR"
 
 # Backup .env before pull
 echo "[1/5] Backing up .env..."
