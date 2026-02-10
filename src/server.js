@@ -119,6 +119,15 @@ monitor.on('monitoring_started', () => broadcast('monitor_status', { isRunning: 
 monitor.on('monitoring_stopped', () => broadcast('monitor_status', { isRunning: false, browserLaunched: !!monitor.browser }));
 monitor.on('error', (err) => broadcast('monitor_error', { message: err.message }));
 
+// Session expired — Binance login required again
+monitor.on('session_expired', async () => {
+  console.warn('[Server] Binance session expired! Re-login required.');
+  broadcast('monitor_error', { message: 'Binance session expired. Please log in again via the Browser tab.' });
+  if (telegram) {
+    await telegram.send('⚠️ <b>Binance session expired!</b>\nMonitoring is paused. Open the dashboard and re-login to Binance via the Browser tab.').catch(() => {});
+  }
+});
+
 // ─── Routes ─────────────────────────────────────────────
 
 // Auth routes (login/logout) - no auth required

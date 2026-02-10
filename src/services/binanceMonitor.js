@@ -131,6 +131,16 @@ class BinanceMonitor extends EventEmitter {
     const screenshotPath = path.join(SCREENSHOT_DIR, 'latest.png');
     await this.page.screenshot({ path: screenshotPath }).catch(() => {});
 
+    // Detect if Binance session has expired (redirected to login page)
+    const currentUrl = this.page.url();
+    if (currentUrl.includes('/login') || currentUrl.includes('/account/login')) {
+      console.warn('[BinanceMonitor] Session expired! Binance redirected to login page.');
+      this.emit('session_expired', { url: currentUrl });
+      // Try to restore from saved storage state
+      await this._saveStorage();
+      return;
+    }
+
     // Look for "Buyer Paid" / "Paid" status indicators
     // Binance P2P order page shows orders with status badges
     // Extract both USDT amount and the local currency (UGX/KES/TZS) amount
@@ -249,6 +259,9 @@ class BinanceMonitor extends EventEmitter {
 
       return results;
     });
+
+    // Save session cookies/storage on every poll to keep session alive
+    await this._saveStorage();
 
     for (const order of orders) {
       if (!this.knownOrders.has(order.orderId)) {
