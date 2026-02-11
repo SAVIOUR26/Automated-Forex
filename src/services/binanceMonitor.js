@@ -25,6 +25,10 @@ class BinanceMonitor extends EventEmitter {
     this.sessionHealthy = true;
     this.lastSuccessfulPoll = null;
 
+    // API interception state
+    this._interceptedOrders = [];
+    this._apiInterceptorSetup = false;
+
     for (const dir of [BROWSER_DATA_DIR, SCREENSHOT_DIR]) {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     }
@@ -94,6 +98,10 @@ class BinanceMonitor extends EventEmitter {
 
   async navigateToBinance() {
     if (!this.page) throw new Error('Browser not launched');
+
+    // Install API interceptor before navigating so we capture responses
+    await this._setupApiInterception();
+
     await this.page.goto(this.binanceUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {
       return this.page.goto(this.binanceUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     });
@@ -216,7 +224,7 @@ class BinanceMonitor extends EventEmitter {
     if (!this.isRunning) return;
 
     try {
-      await this._checkForPaidOrders();
+      await this._checkForOrders();
       this.lastSuccessfulPoll = Date.now();
     } catch (err) {
       console.error('[BinanceMonitor] Poll error:', err.message);
@@ -228,20 +236,78 @@ class BinanceMonitor extends EventEmitter {
     }
   }
 
-  async _checkForPaidOrders() {
+  // ─── API Response Interception ─────────────────────────────
+  // Captures Binance's internal C2C API responses to get structured order JSON.
+  // Far more reliable than DOM scraping since Binance uses hashed class names.
+
+  async _setupApiInterception() {
+    if (this._apiInterceptorSetup || !this.page) return;
+    this._apiInterceptorSetup = true;
+
+    this.page.on('response', async (response) => {
+      try {
+        const url = response.url();
+
+        // Match Binance C2C / P2P order-related API endpoints
+        const isC2cOrder = url.includes('c2c') && url.includes('order');
+        const isP2pOrder = url.includes('p2p') && url.includes('order');
+        if (!isC2cOrder && !isP2pOrder) return;
+        if (response.status() !== 200) return;
+
+        const contentType = response.headers()['content-type'] || '';
+        if (!contentType.includes('json')) return;
+
+        const body = await response.json().catch(() => null);
+        if (!body) return;
+
+        // Binance wraps order data in various response structures
+        let orders = [];
+        if (Array.isArray(body.data)) {
+          orders = body.data;
+        } else if (body.data && Array.isArray(body.data.orderList)) {
+          orders = body.data.orderList;
+        } else if (body.data && Array.isArray(body.data.list)) {
+          orders = body.data.list;
+        }
+
+        if (orders.length > 0) {
+          console.log(`[BinanceMonitor] API intercepted ${orders.length} order(s) from: ${url.split('?')[0]}`);
+          this._interceptedOrders.push(...orders);
+        }
+      } catch (err) {
+        // Silently ignore interception errors — page may be navigating
+      }
+    });
+
+    console.log('[BinanceMonitor] API response interceptor installed');
+  }
+
+  // ─── Main Order Detection ──────────────────────────────────
+
+  async _checkForOrders() {
     if (!this.page) return;
 
-    // Reload the orders page
-    await this.page.reload({ waitUntil: 'networkidle', timeout: 20000 }).catch(() => {});
+    // Ensure interceptor is installed
+    await this._setupApiInterception();
 
-    // Take a screenshot for the dashboard
+    // Clear the interception buffer before reload
+    this._interceptedOrders = [];
+
+    // Reload the page — this triggers fresh Binance API calls
+    await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+
+    // Wait for API responses to arrive and be processed
+    await this.page.waitForLoadState('networkidle').catch(() => {});
+    await this.page.waitForTimeout(2000);
+
+    // Take screenshot for dashboard
     const screenshotPath = path.join(SCREENSHOT_DIR, 'latest.png');
     await this.page.screenshot({ path: screenshotPath }).catch(() => {});
 
-    // Detect if Binance session has expired (redirected to login page)
+    // Check if session expired (redirected to login page)
     const currentUrl = this.page.url();
     if (currentUrl.includes('/login') || currentUrl.includes('/account/login')) {
-      console.warn('[BinanceMonitor] Session expired! Binance redirected to login page.');
+      console.warn('[BinanceMonitor] Session expired! Redirected to login page.');
       this.sessionHealthy = false;
       this.emit('session_expired', { url: currentUrl });
       return;
@@ -249,127 +315,163 @@ class BinanceMonitor extends EventEmitter {
 
     this.sessionHealthy = true;
 
-    // Look for "Buyer Paid" / "Paid" status indicators
-    // Extract both USDT amount and the local currency (UGX/KES/TZS) amount
-    // shown directly on the Binance order — no manual rate calculation needed
-    const orders = await this.page.evaluate(() => {
-      const results = [];
+    // ── Method 1: Parse API-intercepted order data (most reliable) ──
+    let orders = [];
+    if (this._interceptedOrders.length > 0) {
+      orders = this._parseApiOrders(this._interceptedOrders);
+      console.log(`[BinanceMonitor] Parsed ${orders.length} order(s) from API interception`);
+    }
+
+    // ── Method 2: Fallback to DOM text scraping ──
+    if (orders.length === 0) {
+      console.log('[BinanceMonitor] No API data intercepted, trying DOM scraping...');
+      orders = await this._scrapeOrdersFromDOM();
+      if (orders.length > 0) {
+        console.log(`[BinanceMonitor] Scraped ${orders.length} order(s) from DOM`);
+      } else {
+        // Debug: log page info to help diagnose
+        const debugInfo = await this.page.evaluate(() => {
+          const text = document.body.innerText || '';
+          return { textLength: text.length, preview: text.substring(0, 300) };
+        }).catch(() => ({ textLength: 0, preview: '' }));
+        console.log(`[BinanceMonitor] No orders found. URL: ${currentUrl} | Page text length: ${debugInfo.textLength}`);
+        console.log(`[BinanceMonitor] Page preview: ${debugInfo.preview.replace(/\n/g, ' ').substring(0, 200)}`);
+      }
+    }
+
+    // Emit events for newly discovered orders
+    for (const order of orders) {
+      if (!this.knownOrders.has(order.orderId)) {
+        this.knownOrders.add(order.orderId);
+        console.log(`[BinanceMonitor] NEW ORDER: ${order.orderId} | ${order.tradeType} ${order.usdtAmount} USDT = ${order.localAmount} ${order.localCurrency} | Status: ${order.orderStatusText || 'detected'}`);
+        this.emit('order_detected', order);
+      }
+    }
+  }
+
+  // ─── Parse Structured API Responses ────────────────────────
+
+  _parseApiOrders(apiOrders) {
+    const results = [];
+    const seen = new Set();
+
+    for (const o of apiOrders) {
+      const orderId = String(o.orderNumber || o.advNo || o.orderNo || o.id || '');
+      if (!orderId || seen.has(orderId)) continue;
+      seen.add(orderId);
+
+      const usdtAmount = parseFloat(o.amount) || parseFloat(o.quantity) || parseFloat(o.totalAmount) || 0;
+      if (usdtAmount <= 0) continue;
+
+      results.push({
+        orderId,
+        tradeType: o.tradeType || 'UNKNOWN',
+        usdtAmount,
+        localAmount: parseFloat(o.totalPrice) || parseFloat(o.orderAmount) || 0,
+        localCurrency: o.fiatUnit || o.fiat || null,
+        exchangeRate: parseFloat(o.unitPrice) || parseFloat(o.price) || 0,
+        buyerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
+        customerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
+        orderStatusText: this._mapOrderStatus(o.orderStatus || o.tradeStatus),
+        rawText: JSON.stringify(o).substring(0, 800),
+      });
+    }
+
+    return results;
+  }
+
+  _mapOrderStatus(status) {
+    const statusMap = {
+      '1': 'unpaid',
+      '2': 'buyer_paid',
+      '3': 'completed',
+      '4': 'cancelled',
+      '5': 'disputed',
+    };
+    return statusMap[String(status)] || String(status || 'unknown');
+  }
+
+  // ─── Fallback: DOM Text Scraping ───────────────────────────
+  // Used when API interception doesn't capture data (e.g. WebSocket updates).
+  // Extracts order info from the visible page text by finding order number
+  // patterns and parsing surrounding context.
+
+  async _scrapeOrdersFromDOM() {
+    return this.page.evaluate(() => {
       const currencies = ['UGX', 'KES', 'TZS', 'NGN', 'GHS', 'ZAR', 'RWF', 'USD', 'EUR'];
+      const bodyText = document.body.innerText || '';
+      const results = [];
+      const seen = new Set();
 
-      // Strategy 1: Look for order cards/rows with "Paid" status
-      const orderElements = document.querySelectorAll('[class*="order"], [class*="Order"], tr, [data-order]');
+      // Find all Binance order number positions (typically 17-22 digits)
+      const regex = /\b(\d{17,22})\b/g;
+      let match;
+      const positions = [];
+      while ((match = regex.exec(bodyText)) !== null) {
+        if (!seen.has(match[1])) {
+          seen.add(match[1]);
+          positions.push({ orderId: match[1], index: match.index });
+        }
+      }
 
-      for (const el of orderElements) {
-        const text = el.textContent || '';
+      for (let i = 0; i < positions.length; i++) {
+        const { orderId, index } = positions[i];
 
-        // Check if this order shows "Buyer Paid" or "Paid, pending seller release"
-        const isPaid = /buyer\s*paid|paid.*pending.*release|paid.*wait/i.test(text);
-        if (!isPaid) continue;
-
-        // Extract order ID (typically a long number)
-        const orderIdMatch = text.match(/(\d{15,25})/);
-        const orderId = orderIdMatch ? orderIdMatch[1] : null;
+        // Extract context: 500 chars before and until next order (or 1000 after)
+        const start = Math.max(0, index - 500);
+        const end = positions[i + 1]
+          ? positions[i + 1].index
+          : Math.min(bodyText.length, index + 1000);
+        const context = bodyText.substring(start, end);
 
         // Extract USDT amount
-        const usdtMatch = text.match(/([\d,.]+)\s*USDT/i);
-        const usdtAmount = usdtMatch ? parseFloat(usdtMatch[1].replace(/,/g, '')) : null;
+        const usdtMatch = context.match(/([\d,.]+)\s*USDT/i);
+        const usdtAmount = usdtMatch ? parseFloat(usdtMatch[1].replace(/,/g, '')) : 0;
+        if (usdtAmount <= 0) continue;
 
-        // Extract local currency amount + currency code directly from the order
-        let localAmount = null;
+        // Determine trade type
+        const tradeType = /sell/i.test(context) ? 'SELL' : /buy/i.test(context) ? 'BUY' : 'UNKNOWN';
+
+        // Extract local currency amount
+        let localAmount = 0;
         let localCurrency = null;
         for (const cur of currencies) {
-          const amountAfter = text.match(new RegExp('([\\d,]+(?:\\.\\d+)?)\\s*' + cur, 'i'));
-          const amountBefore = text.match(new RegExp(cur + '\\s*([\\d,]+(?:\\.\\d+)?)', 'i'));
-          const match = amountAfter || amountBefore;
-          if (match) {
-            const parsed = parseFloat(match[1].replace(/,/g, ''));
-            if (parsed > 0 && (!localAmount || parsed > localAmount)) {
-              localAmount = parsed;
+          const m = context.match(new RegExp('([\\d,]+(?:\\.\\d+)?)\\s*' + cur, 'i'))
+                 || context.match(new RegExp(cur + '\\s*([\\d,]+(?:\\.\\d+)?)', 'i'));
+          if (m) {
+            const val = parseFloat(m[1].replace(/,/g, ''));
+            if (val > 0 && val > localAmount) {
+              localAmount = val;
               localCurrency = cur;
             }
           }
         }
 
-        // Extract price/rate (e.g., "Price 3,750 UGX")
-        let exchangeRate = null;
-        const priceMatch = text.match(/price[:\s]*([\d,]+(?:\.\d+)?)/i);
+        // Extract exchange rate
+        let exchangeRate = 0;
+        const priceMatch = context.match(/price[:\s]*([\d,]+(?:\.\d+)?)/i);
         if (priceMatch) {
           exchangeRate = parseFloat(priceMatch[1].replace(/,/g, ''));
+        } else if (localAmount > 0 && usdtAmount > 0) {
+          exchangeRate = Math.round(localAmount / usdtAmount);
         }
 
-        // Extract buyer name
-        const nameEl = el.querySelector('[class*="name"], [class*="Name"], [class*="nick"]');
-        const buyerName = nameEl ? nameEl.textContent.trim() : null;
-
-        if (orderId && usdtAmount) {
-          results.push({
-            orderId,
-            usdtAmount,
-            localAmount,
-            localCurrency,
-            exchangeRate,
-            buyerName,
-            rawText: text.substring(0, 800),
-          });
-        }
-      }
-
-      // Strategy 2: Look for status-specific elements
-      if (results.length === 0) {
-        const statusElements = document.querySelectorAll('[class*="status"], [class*="Status"], .tag, .badge');
-        for (const statusEl of statusElements) {
-          const statusText = statusEl.textContent || '';
-          if (!/paid/i.test(statusText)) continue;
-
-          // Walk up to find the parent order container
-          let parent = statusEl.parentElement;
-          for (let i = 0; i < 10 && parent; i++) {
-            const parentText = parent.textContent || '';
-            const orderIdMatch = parentText.match(/(\d{15,25})/);
-            const usdtMatch = parentText.match(/([\d,.]+)\s*USDT/i);
-
-            if (orderIdMatch && usdtMatch) {
-              let localAmount = null;
-              let localCurrency = null;
-              for (const cur of currencies) {
-                const amountAfter = parentText.match(new RegExp('([\\d,]+(?:\\.\\d+)?)\\s*' + cur, 'i'));
-                const amountBefore = parentText.match(new RegExp(cur + '\\s*([\\d,]+(?:\\.\\d+)?)', 'i'));
-                const match = amountAfter || amountBefore;
-                if (match) {
-                  const parsed = parseFloat(match[1].replace(/,/g, ''));
-                  if (parsed > 0 && (!localAmount || parsed > localAmount)) {
-                    localAmount = parsed;
-                    localCurrency = cur;
-                  }
-                }
-              }
-
-              results.push({
-                orderId: orderIdMatch[1],
-                usdtAmount: parseFloat(usdtMatch[1].replace(/,/g, '')),
-                localAmount,
-                localCurrency,
-                exchangeRate: null,
-                buyerName: null,
-                rawText: parentText.substring(0, 800),
-              });
-              break;
-            }
-            parent = parent.parentElement;
-          }
-        }
+        results.push({
+          orderId,
+          tradeType,
+          usdtAmount,
+          localAmount,
+          localCurrency,
+          exchangeRate,
+          buyerName: null,
+          customerName: null,
+          orderStatusText: 'detected',
+          rawText: context.substring(0, 800),
+        });
       }
 
       return results;
     });
-
-    for (const order of orders) {
-      if (!this.knownOrders.has(order.orderId)) {
-        this.knownOrders.add(order.orderId);
-        console.log(`[BinanceMonitor] New paid order detected: ${order.orderId} - ${order.usdtAmount} USDT`);
-        this.emit('order_detected', order);
-      }
-    }
   }
 
   async takeScreenshot() {
