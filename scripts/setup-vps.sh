@@ -1,81 +1,134 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
 # NgaboPay VPS Setup Script
-# Ubuntu 22.04 - Full deployment setup
+# Fresh server deployment — clones repo, installs everything
+# Tested on: Ubuntu 22.04 / 24.04 / Debian 12
 # ═══════════════════════════════════════════════════════════
 
 set -e
 
+# Detect Ubuntu version for package name differences
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "22.04")
+
 DOMAIN="${DOMAIN:-ngabopay.online}"
 APP_DIR="/opt/ngabopay"
 APP_USER="ngabopay"
+REPO_URL="https://github.com/SAVIOUR26/Automated-Forex.git"
+BRANCH="${BRANCH:-master}"
 
-echo "╔══════════════════════════════════════╗"
-echo "║     NgaboPay VPS Setup Script        ║"
-echo "║     Domain: $DOMAIN                  ║"
-echo "╚══════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════════╗"
+echo "║       NgaboPay VPS Setup Script              ║"
+echo "║  Domain: $DOMAIN                             ║"
+echo "║  Branch: $BRANCH                             ║"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
 
-# ─── System Updates ───────────────────────────────────────
-echo "[1/8] Updating system packages..."
+# ─── 1. System Updates & Dependencies ─────────────────────
+echo "[1/9] Updating system and installing dependencies..."
+echo "  Detected Ubuntu: $UBUNTU_VERSION"
 apt-get update -y
 apt-get upgrade -y
+
+# Core packages (same across all Ubuntu versions)
 apt-get install -y curl wget git build-essential nginx certbot python3-certbot-nginx \
   ufw supervisor xvfb x11vnc novnc websockify \
-  fonts-liberation libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 \
-  libgbm1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 \
-  libcairo2 libasound2
+  fonts-liberation libdrm2 libgbm1 libnss3 libxcomposite1 libxdamage1 \
+  libxrandr2 libpango-1.0-0 libcairo2
 
-# ─── Node.js 20 LTS ──────────────────────────────────────
-echo "[2/8] Installing Node.js 20 LTS..."
-if ! command -v node &>/dev/null; then
+# Ubuntu 24.04+ renamed some packages with t64 suffix
+if dpkg --compare-versions "$UBUNTU_VERSION" ge "24.04" 2>/dev/null; then
+  echo "  Installing Ubuntu 24.04+ compatible packages..."
+  apt-get install -y libatk-bridge2.0-0t64 libatk1.0-0t64 libcups2t64 libasound2t64
+else
+  apt-get install -y libatk-bridge2.0-0 libatk1.0-0 libcups2 libasound2
+fi
+
+# ─── 2. Set Timezone to Singapore ──────────────────────────
+echo "[2/9] Setting timezone to Asia/Singapore..."
+timedatectl set-timezone Asia/Singapore
+echo "Timezone: $(timedatectl show --property=Timezone --value)"
+
+# ─── 3. Install Node.js 20 LTS ────────────────────────────
+echo "[3/9] Installing Node.js 20 LTS..."
+# Always install from NodeSource — Ubuntu's nodejs package lacks npm
+# and ships an older version (18.x). NodeSource setup is idempotent.
+if ! command -v npm &>/dev/null || [[ "$(node -v 2>/dev/null)" != v20* ]]; then
+  echo "  Setting up NodeSource repository for Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
 fi
-echo "Node.js version: $(node -v)"
-echo "npm version: $(npm -v)"
+echo "Node.js: $(node -v) | npm: $(npm -v)"
 
-# ─── Create App User ─────────────────────────────────────
-echo "[3/8] Setting up application user..."
+# ─── 4. Create App User ───────────────────────────────────
+echo "[4/9] Setting up application user..."
 if ! id "$APP_USER" &>/dev/null; then
   useradd -r -m -s /bin/bash "$APP_USER"
 fi
 
-# ─── Deploy Application ──────────────────────────────────
-echo "[4/8] Deploying application..."
-mkdir -p "$APP_DIR"
-cp -r . "$APP_DIR/"
-cd "$APP_DIR"
+# ─── 5. Clone Repo & Install App ──────────────────────────
+echo "[5/9] Cloning repository and installing app..."
+
+if [ -d "$APP_DIR/.git" ]; then
+  echo "  Repo already exists, pulling latest..."
+  cd "$APP_DIR"
+  git fetch origin "$BRANCH"
+  git checkout "$BRANCH"
+  git reset --hard "origin/$BRANCH"
+else
+  echo "  Cloning fresh from GitHub..."
+  rm -rf "$APP_DIR"
+  git clone -b "$BRANCH" "$REPO_URL" "$APP_DIR"
+  cd "$APP_DIR"
+fi
+
+# Install Node dependencies
 npm install --production
 
-# Install Playwright browsers
+# Install Playwright Chromium + system deps
 npx playwright install chromium
 npx playwright install-deps chromium
 
-# Create data directory
+# Create data directories
 mkdir -p "$APP_DIR/data/screenshots"
+mkdir -p "$APP_DIR/browser-data"
 
 # Create .env from example if not exists
 if [ ! -f "$APP_DIR/.env" ]; then
   cp "$APP_DIR/.env.example" "$APP_DIR/.env"
-  # Generate random session secret
+
+  # Generate secure random secrets
   SESSION_SECRET=$(openssl rand -hex 32)
   sed -i "s/change-me-to-random-string/$SESSION_SECRET/" "$APP_DIR/.env"
+
   ANDROID_KEY=$(openssl rand -hex 16)
   sed -i "s/change-me-android-key/$ANDROID_KEY/" "$APP_DIR/.env"
+
+  DEALER_PASS=$(openssl rand -base64 16)
+  sed -i "s/change-me-secure-password/$DEALER_PASS/" "$APP_DIR/.env"
+
   echo ""
-  echo ">>> IMPORTANT: Edit $APP_DIR/.env with your actual values!"
-  echo ">>> Generated Android API Key: $ANDROID_KEY"
+  echo "╔══════════════════════════════════════════════════════════╗"
+  echo "║  AUTO-GENERATED CREDENTIALS (save these!)               ║"
+  echo "║                                                          ║"
+  echo "║  Dashboard Login:                                        ║"
+  echo "║    Username: admin                                       ║"
+  echo "║    Password: $DEALER_PASS"
+  echo "║                                                          ║"
+  echo "║  Android API Key: $ANDROID_KEY"
+  echo "║                                                          ║"
+  echo "║  Config file: $APP_DIR/.env                              ║"
+  echo "╚══════════════════════════════════════════════════════════╝"
   echo ""
 fi
 
-# Run database migration
-node "$APP_DIR/src/models/seed.js"
+# Run database migration & seed
+node -e "require('./src/models/migrate').migrate(); require('./src/models/seed').seed(); console.log('Database ready.');"
 
 # Set ownership
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
-# ─── Systemd Service ─────────────────────────────────────
-echo "[5/8] Creating systemd services..."
+# ─── 6. Create Systemd Services ───────────────────────────
+echo "[6/9] Creating systemd services..."
 
 cat > /etc/systemd/system/ngabopay.service << 'SERVICEEOF'
 [Unit]
@@ -108,7 +161,7 @@ ReadWritePaths=/opt/ngabopay/data /opt/ngabopay/browser-data /tmp /home/ngabopay
 WantedBy=multi-user.target
 SERVICEEOF
 
-# ─── Xvfb + VNC for browser viewing ──────────────────────
+# Xvfb virtual display (required for Playwright/Chromium)
 cat > /etc/systemd/system/ngabopay-xvfb.service << 'XVFBEOF'
 [Unit]
 Description=NgaboPay Xvfb Display
@@ -123,6 +176,7 @@ Restart=always
 WantedBy=multi-user.target
 XVFBEOF
 
+# VNC server (local only — accessed via noVNC)
 cat > /etc/systemd/system/ngabopay-vnc.service << 'VNCEOF'
 [Unit]
 Description=NgaboPay VNC Server
@@ -138,6 +192,7 @@ Restart=always
 WantedBy=multi-user.target
 VNCEOF
 
+# noVNC web proxy (local only — proxied through Nginx)
 cat > /etc/systemd/system/ngabopay-novnc.service << 'NOVNCEOF'
 [Unit]
 Description=NgaboPay noVNC WebSocket Proxy
@@ -155,15 +210,15 @@ NOVNCEOF
 systemctl daemon-reload
 systemctl enable ngabopay ngabopay-xvfb ngabopay-vnc ngabopay-novnc
 
-# ─── Nginx Configuration ─────────────────────────────────
-echo "[6/8] Configuring Nginx..."
+# ─── 7. Configure Nginx ───────────────────────────────────
+echo "[7/9] Configuring Nginx reverse proxy..."
 
 cat > /etc/nginx/sites-available/ngabopay << NGINXEOF
 server {
     listen 80;
     server_name $DOMAIN www.$DOMAIN;
 
-    # Redirect to HTTPS (after cert is obtained)
+    # After SSL cert is obtained, uncomment to force HTTPS:
     # return 301 https://\$host\$request_uri;
 
     location / {
@@ -188,9 +243,8 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # noVNC — protected by cookie auth (requires dashboard login first)
+    # noVNC — protected by dashboard cookie auth
     location /novnc/ {
-        # Verify dashboard session cookie via internal auth check
         auth_request /auth-check;
         auth_request_set \$auth_status \$upstream_status;
 
@@ -200,7 +254,7 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
-    # Internal auth check endpoint — returns 200 if logged in
+    # Internal auth check — returns 200 if logged in
     location = /auth-check {
         internal;
         proxy_pass http://127.0.0.1:3000/api/monitor/status;
@@ -213,40 +267,49 @@ NGINXEOF
 
 ln -sf /etc/nginx/sites-available/ngabopay /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
-
 nginx -t && systemctl restart nginx
 
-# ─── Firewall ────────────────────────────────────────────
-echo "[7/8] Configuring firewall..."
+# ─── 8. Configure Firewall ────────────────────────────────
+echo "[8/9] Configuring firewall..."
 ufw allow OpenSSH
 ufw allow 'Nginx Full'
 ufw --force enable
 
-# ─── SSL Certificate ─────────────────────────────────────
-echo "[8/8] SSL Certificate..."
-echo "Run the following to obtain SSL:"
-echo "  certbot --nginx -d $DOMAIN -d www.$DOMAIN"
-echo ""
-
-# ─── Start Services ──────────────────────────────────────
-echo "Starting services..."
+# ─── 9. Start All Services ────────────────────────────────
+echo "[9/9] Starting services..."
 systemctl start ngabopay-xvfb
+sleep 1
 systemctl start ngabopay-vnc
+sleep 1
 systemctl start ngabopay-novnc
+sleep 1
 systemctl start ngabopay
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║            NgaboPay Setup Complete!                  ║"
-echo "║────────────────────────────────────────────────────  ║"
-echo "║  Dashboard: http://$DOMAIN                          ║"
-echo "║  noVNC:     http://$DOMAIN:6080/vnc.html            ║"
-echo "║                                                      ║"
-echo "║  NEXT STEPS:                                         ║"
-echo "║  1. Edit /opt/ngabopay/.env with your credentials    ║"
-echo "║  2. Run: certbot --nginx -d $DOMAIN                  ║"
-echo "║  3. Restart: systemctl restart ngabopay              ║"
-echo "║  4. Open dashboard and login                         ║"
-echo "║  5. Start monitor from dashboard                     ║"
-echo "║  6. Log into Binance in the browser                  ║"
-echo "╚══════════════════════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║                NgaboPay Setup Complete!                      ║"
+echo "╠══════════════════════════════════════════════════════════════╣"
+echo "║                                                              ║"
+echo "║  Dashboard: http://$DOMAIN                                   ║"
+echo "║  Timezone:  Asia/Singapore (for Binance access)              ║"
+echo "║                                                              ║"
+echo "║  NEXT STEPS:                                                 ║"
+echo "║                                                              ║"
+echo "║  1. Point your domain DNS A record to this server IP         ║"
+echo "║     $DOMAIN → $(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_IP')  ║"
+echo "║                                                              ║"
+echo "║  2. Wait for DNS propagation (5-30 min), then get SSL:       ║"
+echo "║     certbot --nginx -d $DOMAIN -d www.$DOMAIN               ║"
+echo "║                                                              ║"
+echo "║  3. Edit credentials if needed:                              ║"
+echo "║     nano $APP_DIR/.env                                       ║"
+echo "║     systemctl restart ngabopay                               ║"
+echo "║                                                              ║"
+echo "║  4. Open dashboard, login, launch browser, log into Binance  ║"
+echo "║                                                              ║"
+echo "║  5. Scan QR code from Android app to pair the phone          ║"
+echo "║                                                              ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Service status:"
+systemctl status ngabopay --no-pager -l | head -5
