@@ -50,7 +50,10 @@ echo "Timezone: $(timedatectl show --property=Timezone --value)"
 
 # ─── 3. Install Node.js 20 LTS ────────────────────────────
 echo "[3/9] Installing Node.js 20 LTS..."
-if ! command -v node &>/dev/null; then
+# Always install from NodeSource — Ubuntu's nodejs package lacks npm
+# and ships an older version (18.x). NodeSource setup is idempotent.
+if ! command -v npm &>/dev/null || [[ "$(node -v 2>/dev/null)" != v20* ]]; then
+  echo "  Setting up NodeSource repository for Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
 fi
