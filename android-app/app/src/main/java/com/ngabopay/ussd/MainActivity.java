@@ -4,24 +4,43 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
+import org.json.JSONObject;
 
 public class MainActivity extends AppCompatActivity {
 
     private TextInputEditText etServerUrl, etApiKey, etMmPin;
     private AutoCompleteTextView spProvider;
-    private TextView tvStatus, tvLastAction, tvLog;
-    private MaterialButton btnStart, btnStop, btnAccessibility;
+    private TextView tvStatus, tvLastAction, tvLog, tvConnectionStatus;
+    private MaterialButton btnStart, btnStop, btnAccessibility, btnScanQR, btnToggleManual;
+    private LinearLayout manualSetupSection;
     private SharedPreferences prefs;
 
     private static final String PREFS_NAME = "NgaboPayPrefs";
     private static MainActivity instance;
     private StringBuilder logBuffer = new StringBuilder();
+    private boolean manualSectionVisible = false;
+
+    // QR Code scanner launcher
+    private final ActivityResultLauncher<ScanOptions> qrScanLauncher =
+        registerForActivityResult(new ScanContract(), result -> {
+            if (result.getContents() != null) {
+                handleQRResult(result.getContents());
+            } else {
+                addLog("QR scan cancelled");
+            }
+        });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,9 +57,13 @@ public class MainActivity extends AppCompatActivity {
         tvStatus = findViewById(R.id.tvStatus);
         tvLastAction = findViewById(R.id.tvLastAction);
         tvLog = findViewById(R.id.tvLog);
+        tvConnectionStatus = findViewById(R.id.tvConnectionStatus);
         btnStart = findViewById(R.id.btnStart);
         btnStop = findViewById(R.id.btnStop);
         btnAccessibility = findViewById(R.id.btnAccessibility);
+        btnScanQR = findViewById(R.id.btnScanQR);
+        btnToggleManual = findViewById(R.id.btnToggleManual);
+        manualSetupSection = findViewById(R.id.manualSetupSection);
 
         // Provider dropdown
         String[] providers = {"MTN Mobile Money (Uganda)", "Airtel Money (Uganda)", "M-Pesa (Kenya)", "Tigo Pesa (Tanzania)"};
@@ -51,7 +74,20 @@ public class MainActivity extends AppCompatActivity {
         etServerUrl.setText(prefs.getString("server_url", ""));
         etApiKey.setText(prefs.getString("api_key", ""));
         etMmPin.setText(prefs.getString("mm_pin", ""));
-        spProvider.setText(prefs.getString("provider", "MTN Mobile Money (Uganda)"), false);
+        spProvider.setText(prefs.getString("provider", "Airtel Money (Uganda)"), false);
+
+        // Update connection status display
+        updateConnectionStatus();
+
+        // QR Scan button
+        btnScanQR.setOnClickListener(v -> launchQRScanner());
+
+        // Toggle manual setup section
+        btnToggleManual.setOnClickListener(v -> {
+            manualSectionVisible = !manualSectionVisible;
+            manualSetupSection.setVisibility(manualSectionVisible ? View.VISIBLE : View.GONE);
+            btnToggleManual.setText(manualSectionVisible ? "Hide Manual Setup" : "Manual Setup (Advanced)");
+        });
 
         // Start polling
         btnStart.setOnClickListener(v -> {
@@ -69,6 +105,59 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void launchQRScanner() {
+        ScanOptions options = new ScanOptions();
+        options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+        options.setPrompt("Scan the QR code from the NgaboPay dashboard");
+        options.setCameraId(0);
+        options.setBeepEnabled(true);
+        options.setBarcodeImageEnabled(false);
+        options.setOrientationLocked(true);
+        qrScanLauncher.launch(options);
+    }
+
+    private void handleQRResult(String qrContent) {
+        try {
+            JSONObject json = new JSONObject(qrContent);
+            String url = json.getString("url");
+            String key = json.getString("key");
+
+            // Save to preferences
+            prefs.edit()
+                .putString("server_url", url)
+                .putString("api_key", key)
+                .apply();
+
+            // Update UI fields
+            etServerUrl.setText(url);
+            etApiKey.setText(key);
+
+            // Update connection status
+            updateConnectionStatus();
+
+            addLog("Connected via QR scan: " + url);
+            Toast.makeText(this, "Connected to server!", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            addLog("Invalid QR code: " + e.getMessage());
+            Toast.makeText(this, "Invalid QR code. Use the QR from the NgaboPay dashboard.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void updateConnectionStatus() {
+        String serverUrl = prefs.getString("server_url", "");
+        String apiKey = prefs.getString("api_key", "");
+
+        if (!serverUrl.isEmpty() && !apiKey.isEmpty()) {
+            tvConnectionStatus.setText("Connected to: " + serverUrl);
+            tvConnectionStatus.setTextColor(0xFF34A853);
+            btnScanQR.setText("Re-scan QR Code");
+        } else {
+            tvConnectionStatus.setText("Not Connected");
+            tvConnectionStatus.setTextColor(0xFFEA4335);
+            btnScanQR.setText("Scan QR Code to Connect");
+        }
+    }
+
     private void saveSettings() {
         prefs.edit()
             .putString("server_url", etServerUrl.getText().toString().trim())
@@ -83,7 +172,8 @@ public class MainActivity extends AppCompatActivity {
         String apiKey = etApiKey.getText().toString().trim();
 
         if (serverUrl.isEmpty() || apiKey.isEmpty()) {
-            addLog("ERROR: Server URL and API Key are required");
+            addLog("ERROR: Server URL and API Key are required. Scan the QR code first!");
+            Toast.makeText(this, "Scan the QR code from the dashboard first", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -94,10 +184,14 @@ public class MainActivity extends AppCompatActivity {
         }
         UssdAccessibilityService.setPin(mmPin);
 
+        // Set the provider for USSD step navigation
+        String provider = spProvider.getText().toString().trim();
+        UssdAccessibilityService.setProvider(provider);
+
         Intent intent = new Intent(this, PayoutPollingService.class);
         intent.putExtra("server_url", serverUrl);
         intent.putExtra("api_key", apiKey);
-        intent.putExtra("provider", spProvider.getText().toString().trim());
+        intent.putExtra("provider", provider);
 
         // Start as foreground service so Android won't kill it
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {

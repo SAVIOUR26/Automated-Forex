@@ -385,7 +385,7 @@ setInterval(() => {
 
 const USSD_PATTERNS = {
   mtn_ug: '*165*1*{phone}*{amount}#',
-  airtel_ug: '*185*1*{phone}*{amount}#',
+  airtel_ug: '*185# (interactive: Customer Transaction → Cash Deposit → Phone → Amount → PIN)',
   mpesa_ke: '*150*00#',
   tigo_tz: '*150*01*{phone}*{amount}#',
   custom: '',
@@ -404,8 +404,9 @@ async function loadSettings() {
   document.getElementById('setMonitorInterval').value = settings.monitor_interval_ms || '10000';
   document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
 
-  // Load phone status
+  // Load phone status and QR code
   loadPhoneStatus();
+  loadQRCode();
 }
 
 function updateUssdPattern() {
@@ -437,6 +438,39 @@ async function saveSettings() {
 async function sendDailySummary() {
   await apiFetch('/summary', { method: 'POST' });
   showToast('Summary sent to Telegram', 'success');
+}
+
+// ─── QR Code Pairing ──────────────────────────────────────
+
+let qrCodeInstance = null;
+
+async function loadQRCode() {
+  const container = document.getElementById('qrCodeContainer');
+  if (!container) return;
+
+  const data = await apiFetch('/pair/qrdata');
+  if (!data || !data.url || !data.key) {
+    container.innerHTML = '<span style="color:#ea4335;font-size:12px;">Failed to load QR</span>';
+    return;
+  }
+
+  // Clear previous QR
+  container.innerHTML = '';
+
+  const qrPayload = JSON.stringify({ url: data.url, key: data.key });
+
+  if (typeof QRCode !== 'undefined') {
+    qrCodeInstance = new QRCode(container, {
+      text: qrPayload,
+      width: 176,
+      height: 176,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  } else {
+    container.innerHTML = '<span style="color:#ea4335;font-size:12px;">QR library not loaded</span>';
+  }
 }
 
 // ─── Phone App Status ─────────────────────────────────────

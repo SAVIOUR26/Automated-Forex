@@ -300,17 +300,28 @@ public class PayoutPollingService extends Service {
 
     /**
      * Build the USSD code to send money via Mobile Money.
+     *
+     * Airtel Money Uganda (*185#) uses interactive menu navigation:
+     *   Step 0: Select "Customer Transaction"
+     *   Step 1: Select "Cash Deposit"
+     *   Step 2: Enter customer phone number
+     *   Step 3: Enter amount
+     *   Step 4: Enter PIN (handled by PIN detection in accessibility service)
+     *
+     * MTN uses shortcode format: *165*1*phone*amount#
      */
     private String buildUssdCode(PayoutTransaction payout) {
+        if (provider == null) return null;
+
         String phone = payout.customer_phone;
         long amount = (long) payout.local_amount;
-
-        if (provider == null) return null;
 
         if (provider.contains("MTN")) {
             return "*165*1*" + phone + "*" + amount + "#";
         } else if (provider.contains("Airtel")) {
-            return "*185*1*" + phone + "*" + amount + "#";
+            // Airtel requires interactive menu navigation via *185#
+            // The UssdAccessibilityService handles the step-by-step flow
+            return "*185#";
         } else if (provider.contains("M-Pesa")) {
             return "*150*00#";
         } else if (provider.contains("Tigo")) {
