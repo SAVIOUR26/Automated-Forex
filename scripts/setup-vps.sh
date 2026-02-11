@@ -68,6 +68,9 @@ fi
 # ─── 5. Clone Repo & Install App ──────────────────────────
 echo "[5/9] Cloning repository and installing app..."
 
+# Allow root to operate on app dir owned by ngabopay user (re-runs)
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
 if [ -d "$APP_DIR/.git" ]; then
   echo "  Repo already exists, pulling latest..."
   cd "$APP_DIR"
