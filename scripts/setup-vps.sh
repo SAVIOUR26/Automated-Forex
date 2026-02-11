@@ -2,10 +2,13 @@
 # ═══════════════════════════════════════════════════════════
 # NgaboPay VPS Setup Script
 # Fresh server deployment — clones repo, installs everything
-# Tested on: Ubuntu 22.04 / Debian 12
+# Tested on: Ubuntu 22.04 / 24.04 / Debian 12
 # ═══════════════════════════════════════════════════════════
 
 set -e
+
+# Detect Ubuntu version for package name differences
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "22.04")
 
 DOMAIN="${DOMAIN:-ngabopay.online}"
 APP_DIR="/opt/ngabopay"
@@ -22,13 +25,23 @@ echo ""
 
 # ─── 1. System Updates & Dependencies ─────────────────────
 echo "[1/9] Updating system and installing dependencies..."
+echo "  Detected Ubuntu: $UBUNTU_VERSION"
 apt-get update -y
 apt-get upgrade -y
+
+# Core packages (same across all Ubuntu versions)
 apt-get install -y curl wget git build-essential nginx certbot python3-certbot-nginx \
   ufw supervisor xvfb x11vnc novnc websockify \
-  fonts-liberation libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 \
-  libgbm1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 \
-  libcairo2 libasound2
+  fonts-liberation libdrm2 libgbm1 libnss3 libxcomposite1 libxdamage1 \
+  libxrandr2 libpango-1.0-0 libcairo2
+
+# Ubuntu 24.04+ renamed some packages with t64 suffix
+if dpkg --compare-versions "$UBUNTU_VERSION" ge "24.04" 2>/dev/null; then
+  echo "  Installing Ubuntu 24.04+ compatible packages..."
+  apt-get install -y libatk-bridge2.0-0t64 libatk1.0-0t64 libcups2t64 libasound2t64
+else
+  apt-get install -y libatk-bridge2.0-0 libatk1.0-0 libcups2 libasound2
+fi
 
 # ─── 2. Set Timezone to Singapore ──────────────────────────
 echo "[2/9] Setting timezone to Asia/Singapore..."
