@@ -18,10 +18,11 @@ function seed() {
     ['default_currency', 'UGX'],
   ];
 
-  const upsert = db.prepare(`
+  // Only insert if key doesn't exist — never overwrite dealer's custom values
+  const insertIfMissing = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, datetime('now'))
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+    ON CONFLICT(key) DO NOTHING
   `);
 
   const insertRate = db.prepare(`
@@ -31,7 +32,7 @@ function seed() {
 
   const transaction = db.transaction(() => {
     for (const [key, value] of defaultSettings) {
-      upsert.run(key, value);
+      insertIfMissing.run(key, value);
     }
 
     // Seed exchange rates if empty

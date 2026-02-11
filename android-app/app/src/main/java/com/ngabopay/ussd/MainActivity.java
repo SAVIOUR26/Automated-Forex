@@ -98,7 +98,13 @@ public class MainActivity extends AppCompatActivity {
         intent.putExtra("server_url", serverUrl);
         intent.putExtra("api_key", apiKey);
         intent.putExtra("provider", spProvider.getText().toString().trim());
-        startService(intent);
+
+        // Start as foreground service so Android won't kill it
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
 
         tvStatus.setText("Running");
         tvStatus.setTextColor(0xFF34A853);

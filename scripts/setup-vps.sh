@@ -188,12 +188,25 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # noVNC (protected by app auth)
+    # noVNC — protected by cookie auth (requires dashboard login first)
     location /novnc/ {
+        # Verify dashboard session cookie via internal auth check
+        auth_request /auth-check;
+        auth_request_set \$auth_status \$upstream_status;
+
         proxy_pass http://127.0.0.1:6080/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
+    }
+
+    # Internal auth check endpoint — returns 200 if logged in
+    location = /auth-check {
+        internal;
+        proxy_pass http://127.0.0.1:3000/api/monitor/status;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie \$http_cookie;
     }
 }
 NGINXEOF

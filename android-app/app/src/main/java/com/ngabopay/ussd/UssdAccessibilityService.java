@@ -14,7 +14,7 @@ import java.util.List;
  * 1. Reads the dialog text
  * 2. Determines the appropriate response (PIN, confirmation, etc.)
  * 3. Enters the response and clicks send/OK
- * 4. Reports success/failure back to the server
+ * 4. Reports success/failure back via PayoutPollingService.onUssdComplete()
  */
 public class UssdAccessibilityService extends AccessibilityService {
 
@@ -102,7 +102,6 @@ public class UssdAccessibilityService extends AccessibilityService {
         if (lowerText.contains("confirm") || lowerText.contains("are you sure") ||
             lowerText.contains("you are sending")) {
             logToActivity("USSD: Confirming transaction");
-            // Usually press 1 to confirm
             enterTextAndSend(rootNode, "1");
             ussdStep++;
             return;
@@ -110,15 +109,12 @@ public class UssdAccessibilityService extends AccessibilityService {
 
         // For menu-based systems (like M-Pesa), navigate by step
         if (currentPayout != null && ussdStep == 0) {
-            // First menu: usually "Send Money" option
             enterTextAndSend(rootNode, "1");
             ussdStep++;
         } else if (currentPayout != null && ussdStep == 1) {
-            // Enter phone number
             enterTextAndSend(rootNode, currentPayout.customer_phone);
             ussdStep++;
         } else if (currentPayout != null && ussdStep == 2) {
-            // Enter amount
             enterTextAndSend(rootNode, String.valueOf((long) currentPayout.local_amount));
             ussdStep++;
         }
@@ -128,27 +124,26 @@ public class UssdAccessibilityService extends AccessibilityService {
         if (currentPayout != null) {
             PayoutPollingService service = PayoutPollingService.getInstance();
             if (service != null) {
-                // Extract reference number if possible
                 String ref = extractReference(responseText);
-                service.notifyServer("complete", currentPayout.id, null, ref != null ? ref : "USSD-OK");
+                service.onUssdComplete(currentPayout.id, true, ref != null ? ref : "USSD-OK", null);
             }
             currentPayout = null;
         }
+        ussdStep = 0;
     }
 
     private void handleFailure(String reason) {
         if (currentPayout != null) {
             PayoutPollingService service = PayoutPollingService.getInstance();
             if (service != null) {
-                service.notifyServer("failed", currentPayout.id, reason, null);
+                service.onUssdComplete(currentPayout.id, false, null, reason);
             }
             currentPayout = null;
         }
+        ussdStep = 0;
     }
 
     private String extractReference(String text) {
-        // Try to find a reference/transaction ID in the success message
-        // Common patterns: "Ref: XXXXX", "TxnId XXXXX", "ID: XXXXX"
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
             "(?:ref|txn|transaction|id)[:\\s]*([A-Z0-9]{6,20})",
             java.util.regex.Pattern.CASE_INSENSITIVE
@@ -163,13 +158,11 @@ public class UssdAccessibilityService extends AccessibilityService {
     private String findDialogText(AccessibilityNodeInfo node) {
         if (node == null) return null;
 
-        // Check this node's text
         StringBuilder sb = new StringBuilder();
         if (node.getText() != null) {
             sb.append(node.getText().toString());
         }
 
-        // Check children
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
@@ -185,7 +178,6 @@ public class UssdAccessibilityService extends AccessibilityService {
     }
 
     private void enterTextAndSend(AccessibilityNodeInfo rootNode, String text) {
-        // Find the text input field
         AccessibilityNodeInfo inputNode = findInputField(rootNode);
         if (inputNode != null) {
             Bundle arguments = new Bundle();
@@ -193,7 +185,6 @@ public class UssdAccessibilityService extends AccessibilityService {
             inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
         }
 
-        // Click Send/OK button
         clickButton(rootNode, "send", "ok", "reply");
     }
 
@@ -221,7 +212,6 @@ public class UssdAccessibilityService extends AccessibilityService {
                         btn.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                         return;
                     }
-                    // Try parent if button itself isn't clickable
                     AccessibilityNodeInfo parent = btn.getParent();
                     if (parent != null && parent.isClickable()) {
                         parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
