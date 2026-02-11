@@ -235,7 +235,7 @@ const telegram = new TelegramNotifier(
 
 const monitor = new BinanceMonitor({
   intervalMs: parseInt(process.env.MONITOR_INTERVAL_MS) || 10000,
-  binanceUrl: process.env.BINANCE_P2P_URL || 'https://p2p.binance.com/en/myOrder?type=1',
+  binanceUrl: process.env.BINANCE_P2P_URL || 'https://www.binance.com/en/my/orders/exchange/openorder',
 });
 
 const exchangeEngine = new ExchangeEngine(telegram);
