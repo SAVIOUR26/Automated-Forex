@@ -60,6 +60,14 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
   `);
 
+  // ─── Incremental migrations ─────────────────────────────
+  // Add binance_status column if not present
+  const cols = db.prepare("PRAGMA table_info(transactions)").all().map(c => c.name);
+  if (!cols.includes('binance_status')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN binance_status TEXT DEFAULT 'unknown'");
+    console.log('Added binance_status column to transactions');
+  }
+
   console.log('Database migrated successfully');
 }
 

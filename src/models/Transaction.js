@@ -7,11 +7,13 @@ class Transaction {
       INSERT INTO transactions (
         binance_order_id, usdt_amount, exchange_rate, local_currency,
         local_amount, fee_percent, fee_amount, customer_phone,
-        customer_name, buyer_binance_name, status, payout_status
+        customer_name, buyer_binance_name, status, payout_status,
+        binance_status
       ) VALUES (
         @binance_order_id, @usdt_amount, @exchange_rate, @local_currency,
         @local_amount, @fee_percent, @fee_amount, @customer_phone,
-        @customer_name, @buyer_binance_name, @status, @payout_status
+        @customer_name, @buyer_binance_name, @status, @payout_status,
+        @binance_status
       )
     `);
 
@@ -28,6 +30,7 @@ class Transaction {
       buyer_binance_name: data.buyer_binance_name || null,
       status: data.status || 'detected',
       payout_status: data.payout_status || 'pending',
+      binance_status: data.binance_status || 'unknown',
     });
 
     return this.findById(result.lastInsertRowid);
@@ -141,6 +144,10 @@ class Transaction {
       sets.push('customer_name = ?');
       params.push(extra.customer_name);
     }
+    if (extra.binance_status) {
+      sets.push('binance_status = ?');
+      params.push(extra.binance_status);
+    }
     if (extra.usdt_released !== undefined) {
       sets.push('usdt_released = ?');
       params.push(extra.usdt_released ? 1 : 0);
@@ -165,6 +172,15 @@ class Transaction {
     params.push(id);
     db.prepare(`UPDATE transactions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
 
+    return this.findById(id);
+  }
+
+  static updateBinanceStatus(id, binanceStatus) {
+    const db = getDb();
+    db.prepare(`
+      UPDATE transactions SET binance_status = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(binanceStatus, id);
     return this.findById(id);
   }
 
