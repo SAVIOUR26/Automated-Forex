@@ -154,7 +154,7 @@ module.exports = function(app) {
 
       // Navigate to Binance — if session is restored, go to orders; else login
       const page = monitor.page;
-      await page.goto('https://www.binance.com/en/my/orders/exchange/p2p', {
+      await page.goto('https://www.binance.com/en/my/orders/p2p', {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       }).catch(() => {});

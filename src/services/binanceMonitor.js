@@ -21,7 +21,7 @@ class BinanceMonitor extends EventEmitter {
     this.activityTimer = null;
     this.healthTimer = null;
     this.knownOrders = new Set();
-    this.binanceUrl = options.binanceUrl || 'https://www.binance.com/en/my/orders/exchange/openorder';
+    this.binanceUrl = options.binanceUrl || 'https://www.binance.com/en/my/orders/p2p';
     this.sessionHealthy = true;
     this.lastSuccessfulPoll = null;
 
