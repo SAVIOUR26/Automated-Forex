@@ -305,24 +305,36 @@
               </div>
               <div class="card-body">
                 <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
-                  The Android app polls for pending payouts and sends Mobile Money via USSD.
+                  Scan this QR code from the NgaboPay Android app to connect instantly. No manual setup needed.
                 </p>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                  <div>
-                    <div class="stat-label">Last Heartbeat</div>
-                    <div id="phoneLastSeen" style="font-size:14px;font-weight:600;">Never</div>
+                <div style="display:flex;align-items:flex-start;gap:20px;">
+                  <div style="flex-shrink:0;">
+                    <div id="qrCodeContainer" style="width:180px;height:180px;background:#f9f9f9;border:2px dashed #ddd;border-radius:8px;display:flex;align-items:center;justify-content:center;">
+                      <span style="color:#999;font-size:12px;">Loading QR...</span>
+                    </div>
+                    <button class="btn btn-sm btn-outline" onclick="loadQRCode()" style="margin-top:8px;width:100%;">
+                      <i class="bi bi-arrow-clockwise"></i> Refresh QR
+                    </button>
                   </div>
-                  <div>
-                    <div class="stat-label">Device</div>
-                    <div id="phoneDevice" style="font-size:14px;">--</div>
-                  </div>
-                  <div>
-                    <div class="stat-label">Payouts Sent</div>
-                    <div id="phonePayouts" style="font-size:14px;font-weight:600;">0</div>
-                  </div>
-                  <div>
-                    <div class="stat-label">Status</div>
-                    <div id="phonePolling" style="font-size:14px;">--</div>
+                  <div style="flex:1;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                      <div>
+                        <div class="stat-label">Last Heartbeat</div>
+                        <div id="phoneLastSeen" style="font-size:14px;font-weight:600;">Never</div>
+                      </div>
+                      <div>
+                        <div class="stat-label">Device</div>
+                        <div id="phoneDevice" style="font-size:14px;">--</div>
+                      </div>
+                      <div>
+                        <div class="stat-label">Payouts Sent</div>
+                        <div id="phonePayouts" style="font-size:14px;font-weight:600;">0</div>
+                      </div>
+                      <div>
+                        <div class="stat-label">Status</div>
+                        <div id="phonePolling" style="font-size:14px;">--</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -432,6 +444,7 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="/js/dashboard.js"></script>
 </body>
 </html>

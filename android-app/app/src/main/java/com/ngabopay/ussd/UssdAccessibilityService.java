@@ -10,17 +10,35 @@ import java.util.List;
 /**
  * Accessibility Service that automates USSD menu navigation.
  *
- * When a USSD dialog appears, this service:
- * 1. Reads the dialog text
- * 2. Determines the appropriate response (PIN, confirmation, etc.)
- * 3. Enters the response and clicks send/OK
- * 4. Reports success/failure back via PayoutPollingService.onUssdComplete()
+ * Provider-aware step navigation:
+ *
+ * AIRTEL MONEY (Uganda) - *185# interactive menu:
+ *   Step 0: Select "Customer Transaction" → enter "1"
+ *   Step 1: Select "Cash Deposit" → enter "1"
+ *   Step 2: Enter customer phone number
+ *   Step 3: Enter amount
+ *   Step 4: Enter PIN (detected by keyword matching)
+ *   Step 5: Confirm (detected by keyword matching)
+ *
+ * MTN (Uganda) - *165*1*phone*amount# shortcode:
+ *   Step 0: Enter PIN (all info is in the shortcode already)
+ *   Step 1: Confirm
+ *
+ * M-Pesa (Kenya) - *150*00# interactive:
+ *   Step 0: Enter phone number
+ *   Step 1: Enter amount
+ *   Step 2: Enter PIN
+ *
+ * Tigo (Tanzania) - *150*01*phone*amount# shortcode:
+ *   Step 0: Enter PIN
+ *   Step 1: Confirm
  */
 public class UssdAccessibilityService extends AccessibilityService {
 
     private static final String TAG = "UssdAccessibility";
     private static PayoutPollingService.PayoutTransaction currentPayout;
     private static String mobileMoneyPin = "";
+    private static String currentProvider = "";
     private int ussdStep = 0;
 
     public static void setCurrentPayout(PayoutPollingService.PayoutTransaction payout) {
@@ -29,6 +47,10 @@ public class UssdAccessibilityService extends AccessibilityService {
 
     public static void setPin(String pin) {
         mobileMoneyPin = pin;
+    }
+
+    public static void setProvider(String provider) {
+        currentProvider = provider != null ? provider : "";
     }
 
     @Override
@@ -52,8 +74,8 @@ public class UssdAccessibilityService extends AccessibilityService {
         String dialogText = findDialogText(rootNode);
         if (dialogText == null || dialogText.isEmpty()) return;
 
-        Log.d(TAG, "USSD Dialog [Step " + ussdStep + "]: " + dialogText);
-        logToActivity("USSD: " + dialogText.substring(0, Math.min(100, dialogText.length())));
+        Log.d(TAG, "USSD Dialog [Step " + ussdStep + "] [" + currentProvider + "]: " + dialogText);
+        logToActivity("USSD [Step " + ussdStep + "]: " + dialogText.substring(0, Math.min(80, dialogText.length())));
 
         // Process based on dialog content
         processUssdDialog(rootNode, dialogText);
@@ -62,9 +84,10 @@ public class UssdAccessibilityService extends AccessibilityService {
     private void processUssdDialog(AccessibilityNodeInfo rootNode, String text) {
         String lowerText = text.toLowerCase();
 
-        // Check for success indicators
+        // Check for success indicators (universal — any provider)
         if (lowerText.contains("successful") || lowerText.contains("confirmed") ||
-            lowerText.contains("completed") || lowerText.contains("sent")) {
+            lowerText.contains("completed") || lowerText.contains("has been sent") ||
+            lowerText.contains("sent to")) {
             logToActivity("USSD: Transaction successful!");
             handleSuccess(text);
             clickButton(rootNode, "ok", "cancel", "dismiss");
@@ -72,10 +95,11 @@ public class UssdAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Check for failure indicators
+        // Check for failure indicators (universal — any provider)
         if (lowerText.contains("failed") || lowerText.contains("error") ||
             lowerText.contains("insufficient") || lowerText.contains("invalid") ||
-            lowerText.contains("denied")) {
+            lowerText.contains("denied") || lowerText.contains("not allowed") ||
+            lowerText.contains("exceeded")) {
             logToActivity("USSD: Transaction failed - " + text);
             handleFailure(text);
             clickButton(rootNode, "ok", "cancel", "dismiss");
@@ -83,7 +107,7 @@ public class UssdAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Check for PIN prompt
+        // Check for PIN prompt (universal — any provider)
         if (lowerText.contains("pin") || lowerText.contains("password") ||
             lowerText.contains("enter your")) {
             if (!mobileMoneyPin.isEmpty()) {
@@ -98,26 +122,111 @@ public class UssdAccessibilityService extends AccessibilityService {
             }
         }
 
-        // Check for confirmation prompt
+        // Check for confirmation prompt (universal — any provider)
         if (lowerText.contains("confirm") || lowerText.contains("are you sure") ||
-            lowerText.contains("you are sending")) {
+            lowerText.contains("you are sending") || lowerText.contains("you are about")) {
             logToActivity("USSD: Confirming transaction");
             enterTextAndSend(rootNode, "1");
             ussdStep++;
             return;
         }
 
-        // For menu-based systems (like M-Pesa), navigate by step
-        if (currentPayout != null && ussdStep == 0) {
-            enterTextAndSend(rootNode, "1");
-            ussdStep++;
-        } else if (currentPayout != null && ussdStep == 1) {
-            enterTextAndSend(rootNode, currentPayout.customer_phone);
-            ussdStep++;
-        } else if (currentPayout != null && ussdStep == 2) {
-            enterTextAndSend(rootNode, String.valueOf((long) currentPayout.local_amount));
-            ussdStep++;
+        // Provider-specific menu navigation
+        if (currentPayout == null) return;
+
+        if (currentProvider.contains("Airtel")) {
+            processAirtelStep(rootNode, lowerText);
+        } else if (currentProvider.contains("M-Pesa")) {
+            processMpesaStep(rootNode, lowerText);
+        } else {
+            // MTN and Tigo use shortcodes — the USSD code already contains phone+amount
+            // So the only interactive steps are PIN (above) and confirmation (above)
+            processShortcodeStep(rootNode, lowerText);
         }
+    }
+
+    /**
+     * Airtel Money Uganda — *185# interactive menu navigation:
+     *   Step 0: Main menu → select "1" (Customer Transaction)
+     *   Step 1: Customer Transaction menu → select "1" (Cash Deposit)
+     *   Step 2: Enter customer phone number
+     *   Step 3: Enter amount
+     *   (PIN and confirmation handled by universal detection above)
+     */
+    private void processAirtelStep(AccessibilityNodeInfo rootNode, String lowerText) {
+        switch (ussdStep) {
+            case 0:
+                // Main menu: Select "Customer Transaction" (option 1)
+                logToActivity("USSD Airtel: Selecting Customer Transaction (1)");
+                enterTextAndSend(rootNode, "1");
+                ussdStep++;
+                break;
+            case 1:
+                // Customer Transaction submenu: Select "Cash Deposit" (option 1)
+                logToActivity("USSD Airtel: Selecting Cash Deposit (1)");
+                enterTextAndSend(rootNode, "1");
+                ussdStep++;
+                break;
+            case 2:
+                // Enter customer phone number
+                logToActivity("USSD Airtel: Entering phone " + currentPayout.customer_phone);
+                enterTextAndSend(rootNode, currentPayout.customer_phone);
+                ussdStep++;
+                break;
+            case 3:
+                // Enter amount
+                String amount = String.valueOf((long) currentPayout.local_amount);
+                logToActivity("USSD Airtel: Entering amount " + amount);
+                enterTextAndSend(rootNode, amount);
+                ussdStep++;
+                break;
+            default:
+                // Steps 4+ are PIN and confirmation — handled by universal detection above
+                logToActivity("USSD Airtel: Unexpected step " + ussdStep + ", entering 1");
+                enterTextAndSend(rootNode, "1");
+                ussdStep++;
+                break;
+        }
+    }
+
+    /**
+     * M-Pesa Kenya — *150*00# interactive menu:
+     *   Step 0: Enter phone number
+     *   Step 1: Enter amount
+     *   (PIN and confirmation handled by universal detection above)
+     */
+    private void processMpesaStep(AccessibilityNodeInfo rootNode, String lowerText) {
+        switch (ussdStep) {
+            case 0:
+                logToActivity("USSD M-Pesa: Entering phone " + currentPayout.customer_phone);
+                enterTextAndSend(rootNode, currentPayout.customer_phone);
+                ussdStep++;
+                break;
+            case 1:
+                String amount = String.valueOf((long) currentPayout.local_amount);
+                logToActivity("USSD M-Pesa: Entering amount " + amount);
+                enterTextAndSend(rootNode, amount);
+                ussdStep++;
+                break;
+            default:
+                logToActivity("USSD M-Pesa: Unexpected step " + ussdStep);
+                enterTextAndSend(rootNode, "1");
+                ussdStep++;
+                break;
+        }
+    }
+
+    /**
+     * MTN / Tigo — shortcode format (*165*1*phone*amount#).
+     * The shortcode already includes phone and amount, so the only
+     * interactive steps are PIN entry and confirmation (handled above).
+     * This fallback handles any unexpected intermediate screens.
+     */
+    private void processShortcodeStep(AccessibilityNodeInfo rootNode, String lowerText) {
+        // For shortcode providers, if we reach here it's an unexpected menu
+        logToActivity("USSD shortcode: Unexpected prompt at step " + ussdStep + ", entering 1");
+        enterTextAndSend(rootNode, "1");
+        ussdStep++;
     }
 
     private void handleSuccess(String responseText) {
