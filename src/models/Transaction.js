@@ -73,6 +73,41 @@ class Transaction {
     `).all();
   }
 
+  /**
+   * Atomically claim a pending payout so no other caller can grab it.
+   * Returns the transaction if successfully claimed, null if already taken.
+   * This prevents double-payouts when the app polls twice before the server updates.
+   */
+  static claimPayout(id) {
+    const db = getDb();
+    const result = db.prepare(`
+      UPDATE transactions
+      SET payout_status = 'processing', status = 'processing',
+          processed_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ? AND payout_status = 'pending' AND status = 'detected'
+    `).run(id);
+
+    if (result.changes === 0) return null;
+    return this.findById(id);
+  }
+
+  /**
+   * Reset stuck "processing" payouts that have been processing for too long.
+   * Called periodically to recover from app crashes / USSD timeouts.
+   */
+  static resetStuckPayouts(timeoutMinutes = 10) {
+    const db = getDb();
+    const result = db.prepare(`
+      UPDATE transactions
+      SET payout_status = 'pending', status = 'detected',
+          updated_at = datetime('now'), failure_reason = 'Processing timeout - auto-reset'
+      WHERE payout_status = 'processing' AND status = 'processing'
+      AND processed_at < datetime('now', '-' || ? || ' minutes')
+    `).run(timeoutMinutes);
+
+    return result.changes;
+  }
+
   static updateStatus(id, status, extra = {}) {
     const db = getDb();
     const sets = ['status = ?', 'updated_at = datetime(\'now\')'];

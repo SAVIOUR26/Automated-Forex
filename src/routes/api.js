@@ -9,12 +9,63 @@ module.exports = function(app) {
   const monitor = app.get('monitor');
   const exchangeEngine = app.get('exchangeEngine');
   const telegram = app.get('telegram');
+  const broadcast = app.get('broadcast');
+
+  // ─── Phone Status (DB-persisted via Settings) ───────────
+  // Track last heartbeat time and alert on disconnect
+  let phoneDisconnectAlerted = false;
+
+  function getPhoneStatus() {
+    const lastSeen = Settings.get('phone_last_seen', null);
+    const device = Settings.get('phone_device', null);
+    const isPolling = Settings.getBoolean('phone_is_polling', false);
+    const payoutsCompleted = parseInt(Settings.get('phone_payouts_completed', '0')) || 0;
+
+    let connected = false;
+    if (lastSeen) {
+      const elapsed = Date.now() - new Date(lastSeen).getTime();
+      connected = elapsed < 60000;
+    }
+
+    return { connected, last_seen: lastSeen, device, is_polling: isPolling, payouts_completed: payoutsCompleted };
+  }
+
+  // ─── Stuck Payout Recovery (runs every 5 minutes) ──────
+  setInterval(() => {
+    const reset = Transaction.resetStuckPayouts(10);
+    if (reset > 0) {
+      console.log(`[API] Auto-reset ${reset} stuck payout(s) after 10min timeout`);
+      ActivityLog.log('stuck_payouts_reset', { count: reset });
+      if (broadcast) broadcast('payout_reset', { count: reset });
+    }
+  }, 5 * 60 * 1000);
+
+  // ─── Phone Disconnect Monitor (runs every 30 seconds) ──
+  setInterval(() => {
+    const status = getPhoneStatus();
+    if (!status.connected && status.last_seen && !phoneDisconnectAlerted) {
+      phoneDisconnectAlerted = true;
+      console.warn('[API] Android phone disconnected!');
+      if (telegram) {
+        telegram.send('⚠️ <b>Phone Disconnected!</b>\nThe Android app has not sent a heartbeat in over 60 seconds. Payouts will not be processed until the app reconnects.').catch(() => {});
+      }
+      if (broadcast) broadcast('phone_disconnected', { last_seen: status.last_seen });
+    } else if (status.connected && phoneDisconnectAlerted) {
+      phoneDisconnectAlerted = false;
+      console.log('[API] Android phone reconnected');
+      if (telegram) {
+        telegram.send('✅ <b>Phone Reconnected!</b>\nThe Android app is back online and processing payouts.').catch(() => {});
+      }
+      if (broadcast) broadcast('phone_reconnected', { device: status.device });
+    }
+  }, 30 * 1000);
 
   // ─── Dashboard Stats ───────────────────────────────────
   router.get('/stats', requireAuth, (req, res) => {
     const stats = Transaction.getStats();
     const monitorStatus = monitor ? monitor.getStatus() : { isRunning: false };
-    res.json({ ...stats, monitor: monitorStatus });
+    const phoneStatus = getPhoneStatus();
+    res.json({ ...stats, monitor: monitorStatus, phone: phoneStatus });
   });
 
   // ─── Transactions ──────────────────────────────────────
@@ -101,13 +152,22 @@ module.exports = function(app) {
 
       await monitor.launch();
 
-      // Navigate to Binance login page so user can see it in noVNC
-      await monitor.page.goto('https://www.binance.com/en/login', {
+      // Navigate to Binance — if session is restored, go to orders; else login
+      const page = monitor.page;
+      await page.goto('https://www.binance.com/en/my/orders/exchange/p2p', {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       }).catch(() => {});
 
-      // Take initial screenshot
+      // Check if redirected to login
+      const url = page.url();
+      if (url.includes('/login') || url.includes('/account/login')) {
+        await page.goto('https://www.binance.com/en/login', {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        }).catch(() => {});
+      }
+
       await monitor.takeScreenshot();
 
       ActivityLog.log('browser_launched');
@@ -225,11 +285,23 @@ module.exports = function(app) {
     res.json(pending);
   });
 
+  // Atomically claim a payout — prevents double-sends
   router.post('/payout/start', requireApiKey, express.json(), async (req, res) => {
     const { transaction_id } = req.body;
     if (!transaction_id) return res.status(400).json({ error: 'Transaction ID required' });
 
-    const transaction = await exchangeEngine.markProcessing(transaction_id);
+    // Use atomic claim instead of plain update
+    const transaction = Transaction.claimPayout(transaction_id);
+    if (!transaction) {
+      return res.status(409).json({ error: 'Payout already claimed or not pending' });
+    }
+
+    ActivityLog.log('payout_processing', null, transaction_id);
+    if (telegram) {
+      await telegram.notifyPayoutProcessing(transaction).catch(() => {});
+    }
+    if (broadcast) broadcast('transaction_updated', transaction);
+
     res.json(transaction);
   });
 
@@ -238,6 +310,7 @@ module.exports = function(app) {
     if (!transaction_id) return res.status(400).json({ error: 'Transaction ID required' });
 
     const transaction = await exchangeEngine.markPayoutComplete(transaction_id, reference || 'USSD');
+    if (broadcast) broadcast('transaction_updated', transaction);
     res.json(transaction);
   });
 
@@ -246,40 +319,26 @@ module.exports = function(app) {
     if (!transaction_id) return res.status(400).json({ error: 'Transaction ID required' });
 
     const transaction = await exchangeEngine.markPayoutFailed(transaction_id, reason || 'Unknown error');
+    if (broadcast) broadcast('transaction_updated', transaction);
     res.json(transaction);
   });
 
   // ─── Phone App Heartbeat / Status ─────────────────────
-  // The Android app sends heartbeats so the dashboard can show connection status
-  let phoneStatus = {
-    connected: false,
-    last_seen: null,
-    device: null,
-    is_polling: false,
-    payouts_completed: 0,
-  };
+  // Persisted in DB so it survives server restarts
 
   router.post('/phone/heartbeat', requireApiKey, express.json(), (req, res) => {
     const { device, is_polling, payouts_completed } = req.body;
-    phoneStatus = {
-      connected: true,
-      last_seen: new Date().toISOString(),
-      device: device || 'Android',
-      is_polling: is_polling || false,
-      payouts_completed: payouts_completed || phoneStatus.payouts_completed,
-    };
+    Settings.set('phone_last_seen', new Date().toISOString());
+    Settings.set('phone_device', device || 'Android');
+    Settings.set('phone_is_polling', String(is_polling || false));
+    if (payouts_completed !== undefined) {
+      Settings.set('phone_payouts_completed', String(payouts_completed));
+    }
     res.json({ success: true });
   });
 
   router.get('/phone/status', requireAuth, (req, res) => {
-    // Mark disconnected if no heartbeat in last 60 seconds
-    if (phoneStatus.last_seen) {
-      const elapsed = Date.now() - new Date(phoneStatus.last_seen).getTime();
-      if (elapsed > 60000) {
-        phoneStatus.connected = false;
-      }
-    }
-    res.json(phoneStatus);
+    res.json(getPhoneStatus());
   });
 
   // ─── Daily Summary ─────────────────────────────────────
