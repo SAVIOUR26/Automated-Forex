@@ -36,7 +36,12 @@ function connectWebSocket() {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case 'new_transaction':
-      showToast(`New order detected: ${msg.data.usdt_amount} USDT`, 'success');
+      showToast(`New order detected: ${msg.data.usdt_amount} USDT (${msg.data.binance_status || 'detected'})`, 'success');
+      loadDashboardStats();
+      loadRecentTransactions();
+      break;
+    case 'transaction_updated':
+      showToast(`Order updated: ${msg.data.binance_order_id?.substring(0, 10)}... → ${msg.data.status}`, 'success');
       loadDashboardStats();
       loadRecentTransactions();
       break;
@@ -45,6 +50,9 @@ function handleWsMessage(msg) {
       break;
     case 'monitor_error':
       showToast(`Monitor error: ${msg.data.message}`, 'error');
+      break;
+    case 'monitor_warning':
+      showToast(msg.data.message, 'warning');
       break;
   }
 }
@@ -138,11 +146,23 @@ async function loadTransactions() {
   renderTransactions(data, 'transactionsBody', true);
 }
 
+function binanceStatusLabel(status) {
+  const labels = {
+    buyer_paid: 'Buyer Paid',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    disputed: 'Disputed',
+    unpaid: 'Unpaid',
+    unknown: 'Unknown',
+  };
+  return labels[status] || status || 'Unknown';
+}
+
 function renderTransactions(transactions, bodyId, showAll = false) {
   const body = document.getElementById(bodyId);
 
   if (!transactions.length) {
-    body.innerHTML = `<tr><td colspan="${showAll ? 13 : 10}" style="text-align:center;color:#999;">No transactions found</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${showAll ? 14 : 11}" style="text-align:center;color:#999;">No transactions found</td></tr>`;
     return;
   }
 
@@ -159,6 +179,7 @@ function renderTransactions(transactions, bodyId, showAll = false) {
         ? `<span style="font-size:12px;">${tx.customer_phone}</span>`
         : `<button class="btn btn-sm btn-outline" onclick="openPhoneModal(${tx.id}, '${(tx.customer_name || '').replace(/'/g, "\\'")}')">Set</button>`}</td>
       ${showAll ? `<td>${tx.buyer_binance_name || '-'}</td>` : ''}
+      <td><span class="badge badge-binance-${tx.binance_status || 'unknown'}">${binanceStatusLabel(tx.binance_status)}</span></td>
       <td><span class="badge badge-${tx.status}">${tx.status}</span></td>
       <td><span class="badge badge-${tx.payout_status}">${tx.payout_status}</span></td>
       <td style="font-size:11px;">${formatTime(tx.created_at)}</td>

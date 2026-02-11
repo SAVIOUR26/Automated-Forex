@@ -20,7 +20,8 @@ class BinanceMonitor extends EventEmitter {
     this.pollTimer = null;
     this.activityTimer = null;
     this.healthTimer = null;
-    this.knownOrders = new Set();
+    // Track orders with their Binance status (orderId → binanceStatus)
+    this.knownOrders = new Map();
     this.binanceUrl = options.binanceUrl || 'https://www.binance.com/en/my/orders/p2p';
     this.sessionHealthy = true;
     this.lastSuccessfulPoll = null;
@@ -339,13 +340,133 @@ class BinanceMonitor extends EventEmitter {
       }
     }
 
-    // Emit events for newly discovered orders
+    // Process each order — detect new ones, track status changes
     for (const order of orders) {
-      if (!this.knownOrders.has(order.orderId)) {
-        this.knownOrders.add(order.orderId);
-        console.log(`[BinanceMonitor] NEW ORDER: ${order.orderId} | ${order.tradeType} ${order.usdtAmount} USDT = ${order.localAmount} ${order.localCurrency} | Status: ${order.orderStatusText || 'detected'}`);
+      const previousStatus = this.knownOrders.get(order.orderId);
+
+      if (previousStatus === undefined) {
+        // ── New order discovered ──
+        this.knownOrders.set(order.orderId, order.binanceStatus);
+        console.log(`[BinanceMonitor] NEW ORDER: ${order.orderId} | ${order.tradeType} ${order.usdtAmount} USDT = ${order.localAmount} ${order.localCurrency} | Binance Status: ${order.binanceStatus}`);
+
+        // For actionable orders (buyer_paid), fetch detail to get phone/name
+        if (order.binanceStatus === 'buyer_paid') {
+          console.log(`[BinanceMonitor] Fetching client details for buyer_paid order ${order.orderId}...`);
+          const details = await this._fetchOrderDetail(order.orderId);
+          if (details) {
+            if (details.customerPhone) order.customerPhone = details.customerPhone;
+            if (details.customerName) order.customerName = details.customerName;
+            console.log(`[BinanceMonitor] Got details — Phone: ${details.customerPhone || 'N/A'}, Name: ${details.customerName || 'N/A'}`);
+          }
+        }
+
         this.emit('order_detected', order);
+
+      } else if (previousStatus !== order.binanceStatus) {
+        // ── Known order with status change ──
+        this.knownOrders.set(order.orderId, order.binanceStatus);
+        console.log(`[BinanceMonitor] STATUS CHANGE: ${order.orderId} | ${previousStatus} → ${order.binanceStatus}`);
+        this.emit('order_status_changed', order);
       }
+    }
+  }
+
+  // ─── Fetch Order Detail (for phone + name) ─────────────────
+  // Makes a direct API call from within the Binance page context
+  // to get the buyer's payment details (phone number, name).
+
+  async _fetchOrderDetail(orderId) {
+    if (!this.page) return null;
+
+    try {
+      const detail = await this.page.evaluate(async (orderNo) => {
+        // Try multiple Binance C2C API endpoints
+        const endpoints = [
+          { url: '/bapi/c2c/v1/private/c2c/order-match/get-order-detail', body: { orderNo } },
+          { url: '/bapi/c2c/v2/friendly/c2c/order-match/order-detail', body: { orderNo } },
+        ];
+
+        for (const ep of endpoints) {
+          try {
+            const resp = await fetch(ep.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(ep.body),
+              credentials: 'include',
+            });
+            if (!resp.ok) continue;
+            const json = await resp.json();
+            if (json.data) return json.data;
+          } catch (e) {
+            // Try next endpoint
+          }
+        }
+        return null;
+      }, orderId);
+
+      if (!detail) {
+        console.log(`[BinanceMonitor] No detail data returned for order ${orderId}`);
+        return null;
+      }
+
+      let customerPhone = null;
+      let customerName = null;
+
+      // ── Extract from payment method fields ──
+      // Binance structures vary: buyerPayDetail, payMethodDetailList, makerPayMethodList
+      const paymentSources = [
+        detail.buyerPayDetail,
+        detail.sellerPayDetail,
+        ...(detail.payMethodDetailList || []),
+        ...(detail.makerPayMethodList || []),
+        ...(detail.takerPayMethodList || []),
+        ...(detail.payMethods || []),
+      ].filter(Boolean);
+
+      for (const pm of paymentSources) {
+        if (customerPhone && customerName) break;
+
+        // Check structured field lists
+        const fields = pm.fields || pm.payMethodFieldList || pm.tradeMethodFieldVos || [];
+        for (const f of fields) {
+          const fn = (f.fieldName || f.name || '').toLowerCase();
+          const fv = f.fieldValue || f.value || '';
+          if (!fv) continue;
+
+          // Phone/account number
+          if (!customerPhone && (fn.includes('account') || fn.includes('phone') || fn.includes('mobile') || fn.includes('number'))) {
+            if (/^\+?\d[\d\s-]{7,}$/.test(fv.trim())) {
+              customerPhone = fv.trim();
+            }
+          }
+          // Account name
+          if (!customerName && (fn.includes('name') || fn.includes('holder'))) {
+            customerName = fv.trim();
+          }
+        }
+
+        // Check identifier field (often the account number)
+        if (!customerPhone) {
+          const ident = pm.identifier || pm.tradeMethodIdentifier || '';
+          if (/^\+?\d[\d\s-]{7,}$/.test(ident.trim())) {
+            customerPhone = ident.trim();
+          }
+        }
+      }
+
+      // Fallback: direct fields on the detail object
+      if (!customerPhone) {
+        customerPhone = detail.buyerPhone || detail.makerPhone || detail.sellerPhone || null;
+      }
+      if (!customerName) {
+        customerName = detail.buyerRealName || detail.makerRealName ||
+                       detail.buyerNickName || detail.makerNickName || null;
+      }
+
+      return { customerPhone, customerName };
+    } catch (err) {
+      console.error(`[BinanceMonitor] Failed to fetch detail for order ${orderId}:`, err.message);
+      return null;
     }
   }
 
@@ -363,7 +484,10 @@ class BinanceMonitor extends EventEmitter {
       const usdtAmount = parseFloat(o.amount) || parseFloat(o.quantity) || parseFloat(o.totalAmount) || 0;
       if (usdtAmount <= 0) continue;
 
-      // Try to extract phone number from payment methods or buyer info
+      // Map Binance's numeric status to readable string
+      const binanceStatus = this._mapOrderStatus(o.orderStatus || o.tradeStatus);
+
+      // Try to extract phone number from payment methods in the list response
       let customerPhone = null;
       if (o.payMethods && Array.isArray(o.payMethods)) {
         for (const pm of o.payMethods) {
@@ -377,14 +501,12 @@ class BinanceMonitor extends EventEmitter {
             }
           }
           if (customerPhone) break;
-          // Also check the identifier field directly
           const ident = pm.identifier || pm.tradeMethodIdentifier || '';
           if (/^\+?\d[\d\s-]{7,}$/.test(ident.trim())) {
             customerPhone = ident.trim();
           }
         }
       }
-      // Also check direct phone fields
       if (!customerPhone) {
         customerPhone = o.buyerPhone || o.sellerPhone || o.phone || o.mobile || null;
       }
@@ -399,7 +521,7 @@ class BinanceMonitor extends EventEmitter {
         buyerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
         customerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
         customerPhone,
-        orderStatusText: this._mapOrderStatus(o.orderStatus || o.tradeStatus),
+        binanceStatus,
         rawText: JSON.stringify(o).substring(0, 800),
       });
     }
@@ -459,6 +581,14 @@ class BinanceMonitor extends EventEmitter {
         // Determine trade type
         const tradeType = /sell/i.test(context) ? 'SELL' : /buy/i.test(context) ? 'BUY' : 'UNKNOWN';
 
+        // Detect Binance status from surrounding text
+        let binanceStatus = 'unknown';
+        if (/\bcompleted\b/i.test(context)) binanceStatus = 'completed';
+        else if (/\bbuyer\s*paid\b/i.test(context) || /\bpaid\b/i.test(context)) binanceStatus = 'buyer_paid';
+        else if (/\bcancelled\b/i.test(context) || /\bcanceled\b/i.test(context)) binanceStatus = 'cancelled';
+        else if (/\bdisputed?\b/i.test(context)) binanceStatus = 'disputed';
+        else if (/\bunpaid\b/i.test(context) || /\bpending\s*payment\b/i.test(context)) binanceStatus = 'unpaid';
+
         // Extract local currency amount
         let localAmount = 0;
         let localCurrency = null;
@@ -492,7 +622,8 @@ class BinanceMonitor extends EventEmitter {
           exchangeRate,
           buyerName: null,
           customerName: null,
-          orderStatusText: 'detected',
+          customerPhone: null,
+          binanceStatus,
           rawText: context.substring(0, 800),
         });
       }

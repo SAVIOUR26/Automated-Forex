@@ -342,6 +342,14 @@ tr:hover td { background: #f8f9fa; }
 .badge-failed { background: #fce8e6; color: var(--danger); }
 .badge-pending { background: #f1f3f4; color: var(--text-secondary); }
 
+/* Binance status badges */
+.badge-binance-buyer_paid { background: #fff3e0; color: #e65100; font-weight: 600; }
+.badge-binance-completed { background: #e6f4ea; color: var(--success); }
+.badge-binance-cancelled { background: #f1f3f4; color: #9e9e9e; text-decoration: line-through; }
+.badge-binance-disputed { background: #fce8e6; color: var(--danger); font-weight: 600; }
+.badge-binance-unpaid { background: #f1f3f4; color: var(--text-secondary); }
+.badge-binance-unknown { background: #f1f3f4; color: var(--text-secondary); }
+
 /* ─── Monitor Status ──────────────────────────────────── */
 
 .monitor-status {

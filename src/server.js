@@ -248,10 +248,19 @@ app.set('broadcast', broadcast);
 
 // ─── Monitor Events ─────────────────────────────────────
 monitor.on('order_detected', async (order) => {
-  console.log(`[Server] Order detected: ${order.orderId}`);
+  console.log(`[Server] Order detected: ${order.orderId} (Binance: ${order.binanceStatus})`);
   const transaction = await exchangeEngine.processDetectedOrder(order);
   if (transaction) {
     broadcast('new_transaction', transaction);
+  }
+});
+
+// Binance status changed for a known order (e.g. buyer_paid → completed)
+monitor.on('order_status_changed', async (order) => {
+  console.log(`[Server] Order status changed: ${order.orderId} → ${order.binanceStatus}`);
+  const transaction = await exchangeEngine.handleBinanceStatusChange(order);
+  if (transaction) {
+    broadcast('transaction_updated', transaction);
   }
 });
 
