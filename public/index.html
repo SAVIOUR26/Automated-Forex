@@ -92,9 +92,9 @@
               <div class="stat-sub">Awaiting processing</div>
             </div>
             <div class="stat-card danger">
-              <div class="stat-label">Today's Fees Earned</div>
-              <div class="stat-value" id="statFees">0</div>
-              <div class="stat-sub">From spread + fees</div>
+              <div class="stat-label">Completed Today</div>
+              <div class="stat-value" id="statCompletedToday">0</div>
+              <div class="stat-sub">Payouts sent successfully</div>
             </div>
           </div>
 
@@ -113,6 +113,7 @@
                     <th>USDT</th>
                     <th>Rate</th>
                     <th>Local Amount</th>
+                    <th>Customer</th>
                     <th>Phone</th>
                     <th>Status</th>
                     <th>Payout</th>
@@ -121,7 +122,7 @@
                   </tr>
                 </thead>
                 <tbody id="recentTransactionsBody">
-                  <tr><td colspan="9" style="text-align:center;color:#999;">No transactions yet</td></tr>
+                  <tr><td colspan="10" style="text-align:center;color:#999;">No transactions yet</td></tr>
                 </tbody>
               </table>
             </div>
@@ -158,6 +159,7 @@
                     <th>Rate</th>
                     <th>Local Amount</th>
                     <th>Currency</th>
+                    <th>Customer</th>
                     <th>Phone</th>
                     <th>Buyer</th>
                     <th>Status</th>
@@ -428,10 +430,14 @@
     </div>
   </div>
 
-  <!-- Set Phone Modal -->
+  <!-- Set Phone & Name Modal -->
   <div class="modal-overlay" id="phoneModal" style="display:none;">
     <div class="modal">
-      <h3>Set Customer Phone</h3>
+      <h3>Set Customer Details</h3>
+      <div class="form-group">
+        <label>Customer Name</label>
+        <input type="text" id="phoneNameInput" placeholder="e.g., John Doe">
+      </div>
       <div class="form-group">
         <label>Phone Number</label>
         <input type="text" id="phoneInput" placeholder="+256700123456">

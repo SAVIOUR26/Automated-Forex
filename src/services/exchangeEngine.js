@@ -120,13 +120,13 @@ class ExchangeEngine {
   }
 
   /**
-   * Set customer phone for a transaction (if not detected from Binance)
+   * Set customer phone and name for a transaction (if not detected from Binance)
    */
-  setCustomerPhone(transactionId, phone) {
-    const transaction = Transaction.updateStatus(transactionId, 'detected', {
-      customer_phone: phone,
-    });
-    ActivityLog.log('phone_set', { phone }, transactionId);
+  setCustomerPhone(transactionId, phone, customerName) {
+    const extra = { customer_phone: phone };
+    if (customerName) extra.customer_name = customerName;
+    const transaction = Transaction.updateStatus(transactionId, 'detected', extra);
+    ActivityLog.log('phone_set', { phone, customer_name: customerName || null }, transactionId);
     return transaction;
   }
 

@@ -137,6 +137,10 @@ class Transaction {
       sets.push('customer_phone = ?');
       params.push(extra.customer_phone);
     }
+    if (extra.customer_name) {
+      sets.push('customer_name = ?');
+      params.push(extra.customer_name);
+    }
     if (extra.usdt_released !== undefined) {
       sets.push('usdt_released = ?');
       params.push(extra.usdt_released ? 1 : 0);
@@ -174,6 +178,13 @@ class Transaction {
              COALESCE(SUM(fee_amount), 0) as fees
       FROM transactions WHERE date(created_at) = ?
     `).get(today);
+
+    const completedToday = db.prepare(`
+      SELECT COUNT(*) as count FROM transactions
+      WHERE status = 'completed' AND date(completed_at) = ?
+    `).get(today);
+
+    totalToday.completed = completedToday.count;
 
     const totalAll = db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(usdt_amount), 0) as usdt,

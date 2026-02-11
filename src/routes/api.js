@@ -87,11 +87,25 @@ module.exports = function(app) {
     res.json({ ...transaction, activity: logs });
   });
 
-  // Set customer phone for a transaction
+  // Set customer phone and name for a transaction
   router.put('/transactions/:id/phone', requireAuth, express.json(), (req, res) => {
-    const { phone } = req.body;
+    const { phone, customer_name } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone required' });
-    const transaction = exchangeEngine.setCustomerPhone(parseInt(req.params.id), phone);
+    const transaction = exchangeEngine.setCustomerPhone(parseInt(req.params.id), phone, customer_name);
+    res.json(transaction);
+  });
+
+  // Confirm a detected order was paid manually (skip automation)
+  router.post('/transactions/:id/confirm-paid', requireAuth, express.json(), async (req, res) => {
+    const { reference } = req.body;
+    const id = parseInt(req.params.id);
+    const existing = Transaction.findById(id);
+    if (!existing) return res.status(404).json({ error: 'Transaction not found' });
+    if (existing.status !== 'detected' || existing.payout_status !== 'pending') {
+      return res.status(400).json({ error: 'Can only confirm detected/pending orders' });
+    }
+    const transaction = await exchangeEngine.markPayoutComplete(id, reference || 'manual');
+    if (broadcast) broadcast('transaction_updated', transaction);
     res.json(transaction);
   });
 
