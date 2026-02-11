@@ -363,6 +363,32 @@ class BinanceMonitor extends EventEmitter {
       const usdtAmount = parseFloat(o.amount) || parseFloat(o.quantity) || parseFloat(o.totalAmount) || 0;
       if (usdtAmount <= 0) continue;
 
+      // Try to extract phone number from payment methods or buyer info
+      let customerPhone = null;
+      if (o.payMethods && Array.isArray(o.payMethods)) {
+        for (const pm of o.payMethods) {
+          const fields = pm.fields || pm.tradeMethodFieldVos || [];
+          for (const f of fields) {
+            const fn = (f.fieldName || f.name || '').toLowerCase();
+            const fv = f.fieldValue || f.value || '';
+            if ((fn.includes('phone') || fn.includes('mobile') || fn.includes('number') || fn.includes('account')) && /^\+?\d[\d\s-]{7,}$/.test(fv.trim())) {
+              customerPhone = fv.trim();
+              break;
+            }
+          }
+          if (customerPhone) break;
+          // Also check the identifier field directly
+          const ident = pm.identifier || pm.tradeMethodIdentifier || '';
+          if (/^\+?\d[\d\s-]{7,}$/.test(ident.trim())) {
+            customerPhone = ident.trim();
+          }
+        }
+      }
+      // Also check direct phone fields
+      if (!customerPhone) {
+        customerPhone = o.buyerPhone || o.sellerPhone || o.phone || o.mobile || null;
+      }
+
       results.push({
         orderId,
         tradeType: o.tradeType || 'UNKNOWN',
@@ -372,6 +398,7 @@ class BinanceMonitor extends EventEmitter {
         exchangeRate: parseFloat(o.unitPrice) || parseFloat(o.price) || 0,
         buyerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
         customerName: o.buyerNickName || o.oppositeNickName || o.sellerNickName || null,
+        customerPhone,
         orderStatusText: this._mapOrderStatus(o.orderStatus || o.tradeStatus),
         rawText: JSON.stringify(o).substring(0, 800),
       });

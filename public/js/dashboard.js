@@ -115,7 +115,7 @@ async function loadDashboardStats() {
   document.getElementById('statTodayUsdt').textContent = `${stats.today.usdt} USDT`;
   document.getElementById('statTodayLocal').textContent = Number(stats.today.local_total).toLocaleString();
   document.getElementById('statPending').textContent = stats.pending;
-  document.getElementById('statFees').textContent = Number(stats.today.fees).toLocaleString();
+  document.getElementById('statCompletedToday').textContent = stats.today.completed || 0;
 
   updateMonitorUI(stats.monitor);
 }
@@ -142,7 +142,7 @@ function renderTransactions(transactions, bodyId, showAll = false) {
   const body = document.getElementById(bodyId);
 
   if (!transactions.length) {
-    body.innerHTML = `<tr><td colspan="${showAll ? 12 : 9}" style="text-align:center;color:#999;">No transactions found</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${showAll ? 13 : 10}" style="text-align:center;color:#999;">No transactions found</td></tr>`;
     return;
   }
 
@@ -154,14 +154,22 @@ function renderTransactions(transactions, bodyId, showAll = false) {
       <td>${Number(tx.exchange_rate).toLocaleString()}</td>
       <td><strong>${Number(tx.local_amount).toLocaleString()}</strong></td>
       ${showAll ? `<td>${tx.local_currency}</td>` : ''}
-      <td>${tx.customer_phone || '<button class="btn btn-sm btn-outline" onclick="openPhoneModal(${tx.id})">Set</button>'}</td>
+      <td style="font-size:12px;">${tx.customer_name || tx.buyer_binance_name || '-'}</td>
+      <td>${tx.customer_phone
+        ? `<span style="font-size:12px;">${tx.customer_phone}</span>`
+        : `<button class="btn btn-sm btn-outline" onclick="openPhoneModal(${tx.id}, '${(tx.customer_name || '').replace(/'/g, "\\'")}')">Set</button>`}</td>
       ${showAll ? `<td>${tx.buyer_binance_name || '-'}</td>` : ''}
       <td><span class="badge badge-${tx.status}">${tx.status}</span></td>
       <td><span class="badge badge-${tx.payout_status}">${tx.payout_status}</span></td>
       <td style="font-size:11px;">${formatTime(tx.created_at)}</td>
       <td>
         <div style="display:flex;gap:4px;">
-          ${tx.status === 'detected' && tx.payout_status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Process"><i class="bi bi-send"></i></button>` : ''}
+          ${tx.status === 'detected' && tx.payout_status === 'pending' && tx.customer_phone
+            ? `<button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone"><i class="bi bi-send"></i></button>`
+            : ''}
+          ${tx.status === 'detected' && tx.payout_status === 'pending'
+            ? `<button class="btn btn-sm btn-warning" onclick="confirmManualPaid(${tx.id})" title="Confirm paid manually"><i class="bi bi-check2-circle"></i></button>`
+            : ''}
           ${tx.status === 'processing' ? `<button class="btn btn-sm btn-success" onclick="markComplete(${tx.id})" title="Complete"><i class="bi bi-check"></i></button>` : ''}
           ${!tx.usdt_released && tx.status === 'completed' ? `<button class="btn btn-sm btn-warning" onclick="releaseUsdt(${tx.id})" title="Release USDT"><i class="bi bi-unlock"></i></button>` : ''}
         </div>
@@ -225,25 +233,44 @@ async function releaseUsdt(id) {
   loadTransactions();
 }
 
-function openPhoneModal(txId) {
+function openPhoneModal(txId, existingName) {
   document.getElementById('phoneTxId').value = txId;
   document.getElementById('phoneInput').value = '';
+  document.getElementById('phoneNameInput').value = existingName || '';
   document.getElementById('phoneModal').style.display = 'flex';
 }
 
 async function savePhone() {
   const id = document.getElementById('phoneTxId').value;
   const phone = document.getElementById('phoneInput').value;
-  if (!phone) { showToast('Phone required', 'error'); return; }
+  const name = document.getElementById('phoneNameInput').value;
+  if (!phone) { showToast('Phone number is required', 'error'); return; }
 
   await apiFetch(`/transactions/${id}/phone`, {
     method: 'PUT',
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, customer_name: name || undefined }),
   });
-  showToast('Phone saved', 'success');
+  showToast('Customer details saved', 'success');
   closeModal('phoneModal');
   loadRecentTransactions();
   loadTransactions();
+}
+
+async function confirmManualPaid(id) {
+  if (!confirm('Confirm this order was paid manually? It will be marked as completed.')) return;
+  const ref = prompt('Enter payout reference (e.g., MoMo TxID):') || 'manual';
+  const result = await apiFetch(`/transactions/${id}/confirm-paid`, {
+    method: 'POST',
+    body: JSON.stringify({ reference: ref }),
+  });
+  if (result && !result.error) {
+    showToast('Order confirmed as manually paid', 'success');
+    loadRecentTransactions();
+    loadTransactions();
+    loadDashboardStats();
+  } else {
+    showToast(result?.error || 'Failed to confirm', 'error');
+  }
 }
 
 // ─── Monitor Control (3-step flow) ────────────────────────
