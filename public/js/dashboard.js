@@ -54,6 +54,14 @@ function handleWsMessage(msg) {
     case 'monitor_warning':
       showToast(msg.data.message, 'warning');
       break;
+    case 'modem_disconnected':
+      showToast('USSD engine / modem disconnected!', 'error');
+      updateModemIndicators(false, null, null);
+      break;
+    case 'modem_reconnected':
+      showToast('USSD engine / modem reconnected', 'success');
+      refreshModemStatus();
+      break;
   }
 }
 
@@ -126,6 +134,9 @@ async function loadDashboardStats() {
   document.getElementById('statCompletedToday').textContent = stats.today.completed || 0;
 
   updateMonitorUI(stats.monitor);
+
+  // Load modem status for the dashboard card + indicators
+  refreshModemStatus();
 }
 
 // ─── Transactions ─────────────────────────────────────────
@@ -186,7 +197,8 @@ function renderTransactions(transactions, bodyId, showAll = false) {
       <td>
         <div style="display:flex;gap:4px;">
           ${tx.status === 'detected' && tx.payout_status === 'pending' && tx.customer_phone
-            ? `<button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone"><i class="bi bi-send"></i></button>`
+            ? `<button class="btn btn-sm btn-primary" onclick="sendViaModem(${tx.id})" title="Send via USSD engine"><i class="bi bi-modem"></i></button>
+               <button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone app"><i class="bi bi-phone"></i></button>`
             : ''}
           ${tx.status === 'detected' && tx.payout_status === 'pending'
             ? `<button class="btn btn-sm btn-warning" onclick="confirmManualPaid(${tx.id})" title="Confirm paid manually"><i class="bi bi-check2-circle"></i></button>`
@@ -451,10 +463,10 @@ async function loadSettings() {
   document.getElementById('setUssdPin').value = settings.ussd_pin ? '****' : '';
   document.getElementById('setMonitorInterval').value = settings.monitor_interval_ms || '10000';
   document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
+  document.getElementById('setAutoPayout').value = settings.auto_payout_enabled || 'false';
 
-  // Load phone status and QR code
-  loadPhoneStatus();
-  loadQRCode();
+  // Load modem / USSD engine status
+  refreshModemStatus();
 }
 
 function updateUssdPattern() {
@@ -473,6 +485,7 @@ async function saveSettings() {
     ussd_pattern: document.getElementById('setUssdPattern').value,
     monitor_interval_ms: document.getElementById('setMonitorInterval').value,
     default_currency: document.getElementById('setDefaultCurrency').value,
+    auto_payout_enabled: document.getElementById('setAutoPayout').value,
   };
   // Only save PIN if changed (not the masked ****)
   if (pin && pin !== '****') {
@@ -521,32 +534,162 @@ async function loadQRCode() {
   }
 }
 
-// ─── Phone App Status ─────────────────────────────────────
+// ─── GSM Modem / USSD Engine ──────────────────────────────
 
-async function loadPhoneStatus() {
-  const data = await apiFetch('/phone/status');
-  if (!data) return;
-
-  const badge = document.getElementById('phoneStatusBadge');
-  const lastSeen = document.getElementById('phoneLastSeen');
-  const device = document.getElementById('phoneDevice');
-  const payouts = document.getElementById('phonePayouts');
-  const polling = document.getElementById('phonePolling');
-
-  if (data.connected) {
-    badge.textContent = 'Connected';
-    badge.style.background = '#e6f4ea';
-    badge.style.color = 'var(--success)';
-  } else {
-    badge.textContent = 'Disconnected';
-    badge.style.background = '#f1f3f4';
-    badge.style.color = 'var(--text-secondary)';
+function updateModemIndicators(isConnected, operatorName, signalPercent) {
+  // Sidebar
+  const sidebarDot = document.getElementById('modemDot');
+  const sidebarLabel = document.getElementById('modemLabel');
+  if (sidebarDot && sidebarLabel) {
+    if (isConnected) {
+      sidebarDot.classList.add('active');
+      sidebarLabel.textContent = `Modem: ${operatorName || 'Connected'}`;
+    } else {
+      sidebarDot.classList.remove('active');
+      sidebarLabel.textContent = 'Modem: Offline';
+    }
   }
 
-  lastSeen.textContent = data.last_seen ? formatTime(data.last_seen) : 'Never';
-  device.textContent = data.device || '--';
-  payouts.textContent = data.payouts_completed || '0';
-  polling.textContent = data.is_polling ? 'Polling Active' : 'Idle';
+  // Top bar
+  const topDot = document.getElementById('topModemDot');
+  const topLabel = document.getElementById('topModemLabel');
+  if (topDot && topLabel) {
+    if (isConnected) {
+      topDot.classList.add('active');
+      topLabel.textContent = operatorName
+        ? `${operatorName} ${signalPercent != null ? signalPercent + '%' : ''}`
+        : 'Modem: Online';
+    } else {
+      topDot.classList.remove('active');
+      topLabel.textContent = 'Modem: Offline';
+    }
+  }
+}
+
+async function refreshModemStatus() {
+  const data = await apiFetch('/modem/status');
+  if (!data) return;
+
+  const isConnected = data.connected || false;
+  const operatorName = data.operator || null;
+  const signalPct = data.signal_percent || null;
+
+  // ── Update sidebar + top bar indicators ──
+  updateModemIndicators(isConnected, operatorName, signalPct);
+
+  // ── Update Dashboard "Payout Device" card ──
+  const dashBadge = document.getElementById('dashModemBadge');
+  const dashDot = document.getElementById('dashModemDot');
+  const dashConn = document.getElementById('dashModemConn');
+  const dashOp = document.getElementById('dashModemOp');
+  const dashSig = document.getElementById('dashModemSig');
+  const dashEngine = document.getElementById('dashModemEngine');
+  const dashCount = document.getElementById('dashModemCount');
+
+  if (dashBadge) {
+    if (isConnected) {
+      dashBadge.textContent = 'Online';
+      dashBadge.style.background = '#e6f4ea';
+      dashBadge.style.color = 'var(--success)';
+    } else {
+      dashBadge.textContent = data.error ? 'Engine Offline' : 'Disconnected';
+      dashBadge.style.background = '#fce8e6';
+      dashBadge.style.color = 'var(--danger)';
+    }
+  }
+  if (dashDot) {
+    if (isConnected) dashDot.classList.add('active');
+    else dashDot.classList.remove('active');
+  }
+  if (dashConn) {
+    dashConn.textContent = isConnected ? 'Connected' : (data.error ? 'Engine unreachable' : 'Disconnected');
+    dashConn.style.color = isConnected ? 'var(--success)' : 'var(--danger)';
+  }
+  if (dashOp) dashOp.textContent = operatorName || '--';
+  if (dashSig) dashSig.textContent = signalPct ? `${signalPct}%` : '--';
+  if (dashEngine) dashEngine.textContent = data.busy ? `Sending #${data.current_payout}` : 'Idle';
+  if (dashCount) dashCount.textContent = data.completed_count || '0';
+
+  // ── Update Settings card (if open) ──
+  const settBadge = document.getElementById('modemStatusBadge');
+  const settConn = document.getElementById('modemConnected');
+  const settOp = document.getElementById('modemOperator');
+  const settSig = document.getElementById('modemSignal');
+  const settPay = document.getElementById('modemPayouts');
+  const settBusy = document.getElementById('modemBusy');
+  const settErr = document.getElementById('modemLastError');
+
+  if (settBadge) {
+    if (isConnected) {
+      settBadge.textContent = 'Online';
+      settBadge.style.background = '#e6f4ea';
+      settBadge.style.color = 'var(--success)';
+    } else {
+      settBadge.textContent = data.error ? 'Engine Offline' : 'Disconnected';
+      settBadge.style.background = '#fce8e6';
+      settBadge.style.color = 'var(--danger)';
+    }
+  }
+  if (settConn) {
+    settConn.textContent = isConnected ? 'Connected' : (data.error ? 'Engine unreachable' : 'Disconnected');
+    settConn.style.color = isConnected ? 'var(--success)' : 'var(--danger)';
+  }
+  if (settOp) settOp.textContent = operatorName || '--';
+  if (settSig) settSig.textContent = signalPct ? `${signalPct}% (${data.signal}/31)` : '--';
+  if (settPay) settPay.textContent = data.completed_count || '0';
+  if (settBusy) settBusy.textContent = data.busy ? `Processing #${data.current_payout}` : 'Idle';
+  if (settErr) {
+    settErr.textContent = data.last_error || 'None';
+    settErr.style.color = data.last_error ? 'var(--danger)' : 'var(--text-secondary)';
+  }
+}
+
+async function modemReconnect() {
+  showToast('Reconnecting modem...', 'warning');
+  const result = await apiFetch('/modem/reconnect', { method: 'POST' });
+  if (result && !result.error) {
+    showToast('Modem reconnected', 'success');
+    refreshModemStatus();
+  } else {
+    showToast(result?.error || 'Reconnect failed', 'error');
+  }
+}
+
+async function modemTestUssd() {
+  const code = prompt('Enter USSD code to test (e.g., *185*5# for balance):');
+  if (!code) return;
+  showToast(`Sending ${code}...`, 'warning');
+  const result = await apiFetch('/modem/test-ussd', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+  if (result && !result.error) {
+    alert(`USSD Response:\n\n${result.response}`);
+  } else {
+    showToast(result?.error || 'Test USSD failed', 'error');
+  }
+}
+
+async function sendViaModem(txId) {
+  if (!confirm('Send this payout via the USSD engine now?')) return;
+  showToast('Sending to USSD engine...', 'warning');
+  const result = await apiFetch(`/modem/send-payout/${txId}`, { method: 'POST' });
+  if (result && result.success) {
+    showToast('Payout sent to USSD engine', 'success');
+    loadRecentTransactions();
+    loadTransactions();
+    loadDashboardStats();
+  } else {
+    showToast(result?.error || 'Failed to send payout', 'error');
+  }
+}
+
+// ─── Phone App Status (legacy — kept for API compatibility) ──
+
+async function loadPhoneStatus() {
+  // No-op: Phone App card removed from dashboard.
+  // The USSD engine heartbeat goes through /api/phone/heartbeat
+  // and modem status is shown via refreshModemStatus().
 }
 
 // ─── Activity Log ─────────────────────────────────────────

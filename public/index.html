@@ -34,6 +34,10 @@
       </nav>
       <div class="sidebar-footer">
         <div class="monitor-status">
+          <span class="status-dot" id="modemDot"></span>
+          <span id="modemLabel">Modem: Offline</span>
+        </div>
+        <div class="monitor-status" style="margin-top:6px;">
           <span class="status-dot" id="monitorDot"></span>
           <span id="monitorLabel">Monitor: Off</span>
         </div>
@@ -50,6 +54,11 @@
           <h1 id="pageTitle">Dashboard</h1>
         </div>
         <div class="top-bar-actions">
+          <div class="monitor-status" title="USSD Engine / GSM Modem">
+            <span class="status-dot" id="topModemDot"></span>
+            <span id="topModemLabel" style="font-size:13px;">Modem: --</span>
+          </div>
+          <div style="width:1px;height:20px;background:var(--border);margin:0 4px;"></div>
           <div class="monitor-status">
             <span class="status-dot" id="topMonitorDot"></span>
             <span id="topMonitorLabel" style="font-size:13px;">Browser Off</span>
@@ -95,6 +104,43 @@
               <div class="stat-label">Completed Today</div>
               <div class="stat-value" id="statCompletedToday">0</div>
               <div class="stat-sub">Payouts sent successfully</div>
+            </div>
+          </div>
+
+          <!-- Modem / Payout Device Status -->
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>Payout Device</h3>
+              <span class="badge" id="dashModemBadge" style="background:#f1f3f4;color:var(--text-secondary);">--</span>
+            </div>
+            <div class="card-body" style="padding:12px 18px;">
+              <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span class="status-dot" id="dashModemDot"></span>
+                  <strong id="dashModemConn" style="font-size:14px;">Checking...</strong>
+                </div>
+                <div>
+                  <span style="color:var(--text-secondary);font-size:12px;">Operator:</span>
+                  <span id="dashModemOp" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                </div>
+                <div>
+                  <span style="color:var(--text-secondary);font-size:12px;">Signal:</span>
+                  <span id="dashModemSig" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                </div>
+                <div>
+                  <span style="color:var(--text-secondary);font-size:12px;">Engine:</span>
+                  <span id="dashModemEngine" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                </div>
+                <div>
+                  <span style="color:var(--text-secondary);font-size:12px;">Payouts:</span>
+                  <span id="dashModemCount" style="font-size:13px;font-weight:600;margin-left:4px;">0</span>
+                </div>
+                <div style="margin-left:auto;">
+                  <button class="btn btn-sm btn-outline" onclick="refreshModemStatus()" title="Refresh modem status">
+                    <i class="bi bi-arrow-clockwise"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -304,45 +350,70 @@
 
             <div class="card">
               <div class="card-header">
-                <h3>Phone App</h3>
-                <span class="badge" id="phoneStatusBadge" style="background:#f1f3f4;color:var(--text-secondary);">Disconnected</span>
+                <h3>GSM Modem / USSD Engine</h3>
+                <span class="badge" id="modemStatusBadge" style="background:#f1f3f4;color:var(--text-secondary);">Offline</span>
               </div>
               <div class="card-body">
                 <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
-                  Scan this QR code from the NgaboPay Android app to connect instantly. No manual setup needed.
+                  The Python USSD engine manages the GSM modem via Tailscale serial bridge. It auto-sends heartbeats when connected.
                 </p>
-                <div style="display:flex;align-items:flex-start;gap:20px;">
-                  <div style="flex-shrink:0;">
-                    <div id="qrCodeContainer" style="width:180px;height:180px;background:#f9f9f9;border:2px dashed #ddd;border-radius:8px;display:flex;align-items:center;justify-content:center;">
-                      <span style="color:#999;font-size:12px;">Loading QR...</span>
-                    </div>
-                    <button class="btn btn-sm btn-outline" onclick="loadQRCode()" style="margin-top:8px;width:100%;">
-                      <i class="bi bi-arrow-clockwise"></i> Refresh QR
-                    </button>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                  <div>
+                    <div class="stat-label">Modem</div>
+                    <div id="modemConnected" style="font-size:14px;font-weight:600;">--</div>
                   </div>
-                  <div style="flex:1;">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                      <div>
-                        <div class="stat-label">Last Heartbeat</div>
-                        <div id="phoneLastSeen" style="font-size:14px;font-weight:600;">Never</div>
-                      </div>
-                      <div>
-                        <div class="stat-label">Device</div>
-                        <div id="phoneDevice" style="font-size:14px;">--</div>
-                      </div>
-                      <div>
-                        <div class="stat-label">Payouts Sent</div>
-                        <div id="phonePayouts" style="font-size:14px;font-weight:600;">0</div>
-                      </div>
-                      <div>
-                        <div class="stat-label">Status</div>
-                        <div id="phonePolling" style="font-size:14px;">--</div>
-                      </div>
-                    </div>
+                  <div>
+                    <div class="stat-label">Operator</div>
+                    <div id="modemOperator" style="font-size:14px;">--</div>
                   </div>
+                  <div>
+                    <div class="stat-label">Signal</div>
+                    <div id="modemSignal" style="font-size:14px;">--</div>
+                  </div>
+                  <div>
+                    <div class="stat-label">Payouts Sent</div>
+                    <div id="modemPayouts" style="font-size:14px;font-weight:600;">0</div>
+                  </div>
+                  <div>
+                    <div class="stat-label">Engine Status</div>
+                    <div id="modemBusy" style="font-size:14px;">--</div>
+                  </div>
+                  <div>
+                    <div class="stat-label">Last Error</div>
+                    <div id="modemLastError" style="font-size:12px;color:var(--danger);">None</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-sm btn-outline" onclick="refreshModemStatus()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                  </button>
+                  <button class="btn btn-sm btn-primary" onclick="modemReconnect()">
+                    <i class="bi bi-plug"></i> Reconnect Modem
+                  </button>
+                  <button class="btn btn-sm btn-outline" onclick="modemTestUssd()">
+                    <i class="bi bi-telephone"></i> Test USSD
+                  </button>
                 </div>
               </div>
             </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Auto-Payout</h3></div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label>Auto-Payout via USSD Engine</label>
+                  <select id="setAutoPayout">
+                    <option value="false">Disabled (manual trigger from dashboard)</option>
+                    <option value="true">Enabled (auto-send when buyer pays + phone set)</option>
+                  </select>
+                  <small style="color:var(--text-secondary);font-size:11px;display:block;margin-top:4px;">
+                    When enabled, the server auto-triggers the USSD engine as soon as a Binance "Buyer Paid" order is detected with a phone number.
+                  </small>
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+              </div>
+            </div>
+
 
             <div class="card">
               <div class="card-header"><h3>Monitor Settings</h3></div>

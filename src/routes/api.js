@@ -11,11 +11,12 @@ module.exports = function(app) {
   const telegram = app.get('telegram');
   const broadcast = app.get('broadcast');
 
-  // ─── Phone Status (DB-persisted via Settings) ───────────
-  // Track last heartbeat time and alert on disconnect
-  let phoneDisconnectAlerted = false;
+  // ─── Payout Device Status (DB-persisted via heartbeat) ──
+  // The Python USSD engine sends heartbeats to /api/phone/heartbeat
+  // We track last seen time and alert on disconnect
+  let deviceDisconnectAlerted = false;
 
-  function getPhoneStatus() {
+  function getDeviceStatus() {
     const lastSeen = Settings.get('phone_last_seen', null);
     const device = Settings.get('phone_device', null);
     const isPolling = Settings.getBoolean('phone_is_polling', false);
@@ -40,23 +41,23 @@ module.exports = function(app) {
     }
   }, 5 * 60 * 1000);
 
-  // ─── Phone Disconnect Monitor (runs every 30 seconds) ──
+  // ─── Payout Device Disconnect Monitor (every 30 seconds) ──
   setInterval(() => {
-    const status = getPhoneStatus();
-    if (!status.connected && status.last_seen && !phoneDisconnectAlerted) {
-      phoneDisconnectAlerted = true;
-      console.warn('[API] Android phone disconnected!');
+    const status = getDeviceStatus();
+    if (!status.connected && status.last_seen && !deviceDisconnectAlerted) {
+      deviceDisconnectAlerted = true;
+      console.warn('[API] USSD engine / modem disconnected!');
       if (telegram) {
-        telegram.send('⚠️ <b>Phone Disconnected!</b>\nThe Android app has not sent a heartbeat in over 60 seconds. Payouts will not be processed until the app reconnects.').catch(() => {});
+        telegram.send('<b>Modem Disconnected!</b>\nThe USSD engine has not sent a heartbeat in over 60 seconds. Payouts will not be processed automatically until the modem reconnects.').catch(() => {});
       }
-      if (broadcast) broadcast('phone_disconnected', { last_seen: status.last_seen });
-    } else if (status.connected && phoneDisconnectAlerted) {
-      phoneDisconnectAlerted = false;
-      console.log('[API] Android phone reconnected');
+      if (broadcast) broadcast('modem_disconnected', { last_seen: status.last_seen });
+    } else if (status.connected && deviceDisconnectAlerted) {
+      deviceDisconnectAlerted = false;
+      console.log('[API] USSD engine / modem reconnected');
       if (telegram) {
-        telegram.send('✅ <b>Phone Reconnected!</b>\nThe Android app is back online and processing payouts.').catch(() => {});
+        telegram.send('<b>Modem Reconnected!</b>\nThe USSD engine is back online. Auto-payouts will resume.').catch(() => {});
       }
-      if (broadcast) broadcast('phone_reconnected', { device: status.device });
+      if (broadcast) broadcast('modem_reconnected', { device: status.device });
     }
   }, 30 * 1000);
 
@@ -64,8 +65,8 @@ module.exports = function(app) {
   router.get('/stats', requireAuth, (req, res) => {
     const stats = Transaction.getStats();
     const monitorStatus = monitor ? monitor.getStatus() : { isRunning: false };
-    const phoneStatus = getPhoneStatus();
-    res.json({ ...stats, monitor: monitorStatus, phone: phoneStatus });
+    const deviceStatus = getDeviceStatus();
+    res.json({ ...stats, monitor: monitorStatus, phone: deviceStatus, device: deviceStatus });
   });
 
   // ─── Transactions ──────────────────────────────────────
@@ -368,7 +369,69 @@ module.exports = function(app) {
   });
 
   router.get('/phone/status', requireAuth, (req, res) => {
-    res.json(getPhoneStatus());
+    res.json(getDeviceStatus());
+  });
+
+  // ─── USSD Engine / Modem Endpoints ─────────────────────
+  // Proxy to the Python USSD engine running on localhost:7001
+
+  const modemBridge = app.get('modemBridge');
+
+  router.get('/modem/status', requireAuth, async (req, res) => {
+    try {
+      const status = await modemBridge.getStatus();
+      res.json(status);
+    } catch (err) {
+      res.json({ connected: false, error: err.message });
+    }
+  });
+
+  router.post('/modem/reconnect', requireAuth, async (req, res) => {
+    try {
+      const result = await modemBridge.reconnect();
+      ActivityLog.log('modem_reconnected', result);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/modem/test-ussd', requireAuth, express.json(), async (req, res) => {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'USSD code required' });
+    try {
+      const result = await modemBridge.testUssd(code);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Manually trigger a modem payout for a specific transaction
+  router.post('/modem/send-payout/:id', requireAuth, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const transaction = Transaction.findById(id);
+    if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
+    if (!transaction.customer_phone) return res.status(400).json({ error: 'No phone number set' });
+    if (transaction.payout_status !== 'pending') {
+      return res.status(400).json({ error: `Payout is ${transaction.payout_status}, not pending` });
+    }
+
+    try {
+      // Claim atomically first
+      const claimed = Transaction.claimPayout(id);
+      if (!claimed) return res.status(409).json({ error: 'Payout already claimed' });
+
+      ActivityLog.log('modem_payout_triggered', { phone: transaction.customer_phone }, id);
+      if (broadcast) broadcast('transaction_updated', claimed);
+
+      await modemBridge.sendPayout(transaction);
+      res.json({ success: true, message: 'Payout sent to USSD engine' });
+    } catch (err) {
+      // If engine rejected, reset payout status so it can be retried
+      Transaction.updateStatus(id, 'detected', { payout_status: 'pending' });
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ─── Daily Summary ─────────────────────────────────────
