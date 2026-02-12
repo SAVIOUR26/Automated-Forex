@@ -1,16 +1,3 @@
-# ─── Systemd Service: USSD Engine (Python) ───────────────
-#
-# Auto-starts the Python USSD engine on boot.
-#
-# Install:
-#   1. cd /home/user/Automated-Forex/modem-engine
-#   2. python3 -m venv venv && source venv/bin/activate
-#   3. pip install -r requirements.txt
-#   4. cp .env.example .env && nano .env
-#   5. sudo cp setup/ussd-engine.service /etc/systemd/system/
-#   6. sudo systemctl daemon-reload
-#   7. sudo systemctl enable --now ussd-engine
-
 [Unit]
 Description=NgaboPay USSD Engine
 After=network.target modem-bridge.service
@@ -18,9 +5,9 @@ Wants=modem-bridge.service
 
 [Service]
 Type=simple
-User=user
-WorkingDirectory=/home/user/Automated-Forex/modem-engine
-ExecStart=/home/user/Automated-Forex/modem-engine/venv/bin/python main.py
+User=root
+WorkingDirectory=/root/Automated-Forex/modem-engine
+ExecStart=/root/Automated-Forex/modem-engine/venv/bin/python main.py
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
