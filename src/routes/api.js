@@ -299,7 +299,7 @@ module.exports = function(app) {
     const protocol = req.protocol;
     const host = req.get('host');
     const serverUrl = `${protocol}://${host}`;
-    const apiKey = process.env.ANDROID_API_KEY || '';
+    const apiKey = process.env.DEVICE_API_KEY || process.env.ANDROID_API_KEY || '';
 
     res.json({
       url: serverUrl,
