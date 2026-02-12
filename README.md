@@ -74,7 +74,7 @@ sudo certbot --nginx -d ngabopay.online
 | `RATE_UGX` | UGX per 1 USDT | `3750` |
 | `RATE_KES` | KES per 1 USDT | `152` |
 | `FEE_PERCENT` | Your fee percentage | `2` |
-| `ANDROID_API_KEY` | Key for Android app | `random-string` |
+| `DEVICE_API_KEY` | Key for modem engine / external devices | `random-string` |
 
 ## API Endpoints
 

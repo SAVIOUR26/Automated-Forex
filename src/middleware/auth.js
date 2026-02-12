@@ -5,9 +5,10 @@ function requireAuth(req, res, next) {
     return next();
   }
 
-  // Check for API key (for Android app)
+  // Check for API key (for modem engine / external devices)
   const apiKey = req.headers['x-api-key'];
-  if (apiKey && apiKey === process.env.ANDROID_API_KEY) {
+  const deviceKey = process.env.DEVICE_API_KEY || process.env.ANDROID_API_KEY;
+  if (apiKey && deviceKey && apiKey === deviceKey) {
     return next();
   }
 
@@ -20,7 +21,8 @@ function requireAuth(req, res, next) {
 
 function requireApiKey(req, res, next) {
   const apiKey = req.headers['x-api-key'];
-  if (apiKey && apiKey === process.env.ANDROID_API_KEY) {
+  const deviceKey = process.env.DEVICE_API_KEY || process.env.ANDROID_API_KEY;
+  if (apiKey && deviceKey && apiKey === deviceKey) {
     return next();
   }
 
