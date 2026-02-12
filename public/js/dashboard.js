@@ -186,7 +186,8 @@ function renderTransactions(transactions, bodyId, showAll = false) {
       <td>
         <div style="display:flex;gap:4px;">
           ${tx.status === 'detected' && tx.payout_status === 'pending' && tx.customer_phone
-            ? `<button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone"><i class="bi bi-send"></i></button>`
+            ? `<button class="btn btn-sm btn-primary" onclick="sendViaModem(${tx.id})" title="Send via USSD engine"><i class="bi bi-modem"></i></button>
+               <button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone app"><i class="bi bi-phone"></i></button>`
             : ''}
           ${tx.status === 'detected' && tx.payout_status === 'pending'
             ? `<button class="btn btn-sm btn-warning" onclick="confirmManualPaid(${tx.id})" title="Confirm paid manually"><i class="bi bi-check2-circle"></i></button>`
@@ -451,8 +452,10 @@ async function loadSettings() {
   document.getElementById('setUssdPin').value = settings.ussd_pin ? '****' : '';
   document.getElementById('setMonitorInterval').value = settings.monitor_interval_ms || '10000';
   document.getElementById('setDefaultCurrency').value = settings.default_currency || 'UGX';
+  document.getElementById('setAutoPayout').value = settings.auto_payout_enabled || 'false';
 
-  // Load phone status and QR code
+  // Load modem status, phone status, and QR code
+  refreshModemStatus();
   loadPhoneStatus();
   loadQRCode();
 }
@@ -473,6 +476,7 @@ async function saveSettings() {
     ussd_pattern: document.getElementById('setUssdPattern').value,
     monitor_interval_ms: document.getElementById('setMonitorInterval').value,
     default_currency: document.getElementById('setDefaultCurrency').value,
+    auto_payout_enabled: document.getElementById('setAutoPayout').value,
   };
   // Only save PIN if changed (not the masked ****)
   if (pin && pin !== '****') {
@@ -518,6 +522,82 @@ async function loadQRCode() {
     });
   } else {
     container.innerHTML = '<span style="color:#ea4335;font-size:12px;">QR library not loaded</span>';
+  }
+}
+
+// ─── GSM Modem / USSD Engine ──────────────────────────────
+
+async function refreshModemStatus() {
+  const data = await apiFetch('/modem/status');
+  if (!data) return;
+
+  const badge = document.getElementById('modemStatusBadge');
+  const connected = document.getElementById('modemConnected');
+  const operator = document.getElementById('modemOperator');
+  const signal = document.getElementById('modemSignal');
+  const payouts = document.getElementById('modemPayouts');
+  const busy = document.getElementById('modemBusy');
+  const lastError = document.getElementById('modemLastError');
+
+  if (data.connected) {
+    badge.textContent = 'Online';
+    badge.style.background = '#e6f4ea';
+    badge.style.color = 'var(--success)';
+    connected.textContent = 'Connected';
+    connected.style.color = 'var(--success)';
+  } else {
+    badge.textContent = data.error ? 'Engine Offline' : 'Modem Disconnected';
+    badge.style.background = '#fce8e6';
+    badge.style.color = 'var(--danger)';
+    connected.textContent = data.error ? 'Engine unreachable' : 'Disconnected';
+    connected.style.color = 'var(--danger)';
+  }
+
+  operator.textContent = data.operator || '--';
+  signal.textContent = data.signal_percent ? `${data.signal_percent}% (${data.signal}/31)` : '--';
+  payouts.textContent = data.completed_count || '0';
+  busy.textContent = data.busy ? `Processing #${data.current_payout}` : 'Idle';
+  lastError.textContent = data.last_error || 'None';
+  lastError.style.color = data.last_error ? 'var(--danger)' : 'var(--text-secondary)';
+}
+
+async function modemReconnect() {
+  showToast('Reconnecting modem...', 'warning');
+  const result = await apiFetch('/modem/reconnect', { method: 'POST' });
+  if (result && !result.error) {
+    showToast('Modem reconnected', 'success');
+    refreshModemStatus();
+  } else {
+    showToast(result?.error || 'Reconnect failed', 'error');
+  }
+}
+
+async function modemTestUssd() {
+  const code = prompt('Enter USSD code to test (e.g., *185*5# for balance):');
+  if (!code) return;
+  showToast(`Sending ${code}...`, 'warning');
+  const result = await apiFetch('/modem/test-ussd', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+  if (result && !result.error) {
+    alert(`USSD Response:\n\n${result.response}`);
+  } else {
+    showToast(result?.error || 'Test USSD failed', 'error');
+  }
+}
+
+async function sendViaModem(txId) {
+  if (!confirm('Send this payout via the USSD engine now?')) return;
+  showToast('Sending to USSD engine...', 'warning');
+  const result = await apiFetch(`/modem/send-payout/${txId}`, { method: 'POST' });
+  if (result && result.success) {
+    showToast('Payout sent to USSD engine', 'success');
+    loadRecentTransactions();
+    loadTransactions();
+    loadDashboardStats();
+  } else {
+    showToast(result?.error || 'Failed to send payout', 'error');
   }
 }
 

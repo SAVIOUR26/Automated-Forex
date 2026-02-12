@@ -1,0 +1,26 @@
+# ─── Systemd Service: Serial Bridge (socat) ──────────────
+#
+# Auto-starts the socat bridge on boot and restarts on failure.
+#
+# Install:
+#   1. Edit LAPTOP_IP below to your laptop's Tailscale IP
+#   2. sudo cp vps-bridge.service /etc/systemd/system/modem-bridge.service
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now modem-bridge
+
+[Unit]
+Description=NgaboPay Modem Bridge (socat)
+After=network.target tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=simple
+# EDIT THIS: Set to your laptop's Tailscale IP
+Environment=LAPTOP_IP=100.64.0.2
+Environment=LAPTOP_PORT=7000
+ExecStart=/usr/bin/socat pty,link=/dev/ttyVMODEM,raw,echo=0,waitslave tcp:${LAPTOP_IP}:${LAPTOP_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

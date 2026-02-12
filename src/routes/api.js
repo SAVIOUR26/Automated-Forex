@@ -371,6 +371,68 @@ module.exports = function(app) {
     res.json(getPhoneStatus());
   });
 
+  // ─── USSD Engine / Modem Endpoints ─────────────────────
+  // Proxy to the Python USSD engine running on localhost:7001
+
+  const modemBridge = app.get('modemBridge');
+
+  router.get('/modem/status', requireAuth, async (req, res) => {
+    try {
+      const status = await modemBridge.getStatus();
+      res.json(status);
+    } catch (err) {
+      res.json({ connected: false, error: err.message });
+    }
+  });
+
+  router.post('/modem/reconnect', requireAuth, async (req, res) => {
+    try {
+      const result = await modemBridge.reconnect();
+      ActivityLog.log('modem_reconnected', result);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/modem/test-ussd', requireAuth, express.json(), async (req, res) => {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'USSD code required' });
+    try {
+      const result = await modemBridge.testUssd(code);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Manually trigger a modem payout for a specific transaction
+  router.post('/modem/send-payout/:id', requireAuth, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const transaction = Transaction.findById(id);
+    if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
+    if (!transaction.customer_phone) return res.status(400).json({ error: 'No phone number set' });
+    if (transaction.payout_status !== 'pending') {
+      return res.status(400).json({ error: `Payout is ${transaction.payout_status}, not pending` });
+    }
+
+    try {
+      // Claim atomically first
+      const claimed = Transaction.claimPayout(id);
+      if (!claimed) return res.status(409).json({ error: 'Payout already claimed' });
+
+      ActivityLog.log('modem_payout_triggered', { phone: transaction.customer_phone }, id);
+      if (broadcast) broadcast('transaction_updated', claimed);
+
+      await modemBridge.sendPayout(transaction);
+      res.json({ success: true, message: 'Payout sent to USSD engine' });
+    } catch (err) {
+      // If engine rejected, reset payout status so it can be retried
+      Transaction.updateStatus(id, 'detected', { payout_status: 'pending' });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Daily Summary ─────────────────────────────────────
   router.post('/summary', requireAuth, async (req, res) => {
     const stats = Transaction.getStats();

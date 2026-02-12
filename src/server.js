@@ -16,6 +16,7 @@ const { seed } = require('./models/seed');
 const BinanceMonitor = require('./services/binanceMonitor');
 const TelegramNotifier = require('./services/telegramBot');
 const ExchangeEngine = require('./services/exchangeEngine');
+const ModemBridge = require('./services/modemBridge');
 const Settings = require('./models/Settings');
 const { requireAuth } = require('./middleware/auth');
 const { getDb } = require('./models/database');
@@ -240,11 +241,15 @@ const monitor = new BinanceMonitor({
 
 const exchangeEngine = new ExchangeEngine(telegram);
 
+// USSD Engine bridge — talks to the Python modem service on localhost:7001
+const modemBridge = new ModemBridge(process.env.USSD_ENGINE_URL || 'http://127.0.0.1:7001');
+
 // Store services on app for route access
 app.set('monitor', monitor);
 app.set('exchangeEngine', exchangeEngine);
 app.set('telegram', telegram);
 app.set('broadcast', broadcast);
+app.set('modemBridge', modemBridge);
 
 // ─── Monitor Events ─────────────────────────────────────
 monitor.on('order_detected', async (order) => {
@@ -252,6 +257,32 @@ monitor.on('order_detected', async (order) => {
   const transaction = await exchangeEngine.processDetectedOrder(order);
   if (transaction) {
     broadcast('new_transaction', transaction);
+
+    // Auto-payout via USSD engine if enabled and conditions are met
+    const autoPayout = Settings.getBoolean('auto_payout_enabled', false);
+    if (autoPayout &&
+        transaction.status === 'detected' &&
+        transaction.payout_status === 'pending' &&
+        transaction.customer_phone &&
+        transaction.binance_status === 'buyer_paid') {
+      try {
+        const modemReady = await modemBridge.isAvailable();
+        if (modemReady) {
+          // Claim the payout atomically first
+          const Transaction = require('./models/Transaction');
+          const claimed = Transaction.claimPayout(transaction.id);
+          if (claimed) {
+            console.log(`[Server] Auto-payout: triggering modem for #${transaction.id}`);
+            await modemBridge.sendPayout(transaction);
+            broadcast('transaction_updated', claimed);
+          }
+        } else {
+          console.log('[Server] Auto-payout: USSD engine not available, waiting for manual or phone');
+        }
+      } catch (err) {
+        console.error(`[Server] Auto-payout failed for #${transaction.id}: ${err.message}`);
+      }
+    }
   }
 });
 
