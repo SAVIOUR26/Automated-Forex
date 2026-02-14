@@ -32,6 +32,7 @@ apt-get upgrade -y
 # Core packages (same across all Ubuntu versions)
 apt-get install -y curl wget git build-essential nginx certbot python3-certbot-nginx \
   ufw supervisor xvfb x11vnc novnc websockify \
+  python3 python3-pip python3-venv \
   fonts-liberation libdrm2 libgbm1 libnss3 libxcomposite1 libxdamage1 \
   libxrandr2 libpango-1.0-0 libcairo2
 
@@ -103,8 +104,8 @@ if [ ! -f "$APP_DIR/.env" ]; then
   SESSION_SECRET=$(openssl rand -hex 32)
   sed -i "s/change-me-to-random-string/$SESSION_SECRET/" "$APP_DIR/.env"
 
-  ANDROID_KEY=$(openssl rand -hex 16)
-  sed -i "s/change-me-android-key/$ANDROID_KEY/" "$APP_DIR/.env"
+  DEVICE_KEY="ngp-modem-$(openssl rand -hex 10)"
+  sed -i "s/change-me-device-key/$DEVICE_KEY/" "$APP_DIR/.env"
 
   DEALER_PASS=$(openssl rand -base64 16)
   sed -i "s/change-me-secure-password/$DEALER_PASS/" "$APP_DIR/.env"
@@ -117,7 +118,8 @@ if [ ! -f "$APP_DIR/.env" ]; then
   echo "║    Username: admin                                       ║"
   echo "║    Password: $DEALER_PASS"
   echo "║                                                          ║"
-  echo "║  Android API Key: $ANDROID_KEY"
+  echo "║  Device API Key: $DEVICE_KEY"
+  echo "║  (use this in modem-engine/.env as API_KEY)              ║"
   echo "║                                                          ║"
   echo "║  Config file: $APP_DIR/.env                              ║"
   echo "╚══════════════════════════════════════════════════════════╝"
@@ -126,6 +128,21 @@ fi
 
 # Run database migration & seed
 node -e "require('./src/models/migrate').migrate(); require('./src/models/seed').seed(); console.log('Database ready.');"
+
+# ─── Setup USSD Modem Engine (Python) ─────────────────────
+echo "  Setting up USSD modem engine (Python)..."
+cd "$APP_DIR/modem-engine"
+python3 -m venv venv
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r requirements.txt
+
+# Create modem engine .env if not exists
+if [ ! -f "$APP_DIR/modem-engine/.env" ]; then
+  cp "$APP_DIR/modem-engine/.env.example" "$APP_DIR/modem-engine/.env"
+  echo "  Created modem-engine/.env — edit it with your modem port and MM PIN"
+fi
+
+cd "$APP_DIR"
 
 # Set ownership
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
@@ -210,8 +227,35 @@ Restart=always
 WantedBy=multi-user.target
 NOVNCEOF
 
+# USSD Modem Engine (Python FastAPI — drives the GSM modem)
+cat > /etc/systemd/system/ngabopay-ussd-engine.service << 'USSDEOF'
+[Unit]
+Description=NgaboPay USSD Modem Engine
+After=network.target
+
+[Service]
+Type=simple
+User=ngabopay
+WorkingDirectory=/opt/ngabopay/modem-engine
+ExecStart=/opt/ngabopay/modem-engine/venv/bin/python main.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/ngabopay/modem-engine/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ngabopay-ussd
+
+# Modem access — ngabopay user needs dialout group for serial ports
+SupplementaryGroups=dialout
+
+[Install]
+WantedBy=multi-user.target
+USSDEOF
+
 systemctl daemon-reload
-systemctl enable ngabopay ngabopay-xvfb ngabopay-vnc ngabopay-novnc
+systemctl enable ngabopay ngabopay-xvfb ngabopay-vnc ngabopay-novnc ngabopay-ussd-engine
 
 # ─── 7. Configure Nginx ───────────────────────────────────
 echo "[7/9] Configuring Nginx reverse proxy..."
@@ -278,6 +322,9 @@ ufw allow OpenSSH
 ufw allow 'Nginx Full'
 ufw --force enable
 
+# Add ngabopay user to dialout group (for serial/modem access)
+usermod -aG dialout "$APP_USER" 2>/dev/null || true
+
 # ─── 9. Start All Services ────────────────────────────────
 echo "[9/9] Starting services..."
 systemctl start ngabopay-xvfb
@@ -287,6 +334,8 @@ sleep 1
 systemctl start ngabopay-novnc
 sleep 1
 systemctl start ngabopay
+sleep 1
+systemctl start ngabopay-ussd-engine
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
@@ -308,11 +357,18 @@ echo "║  3. Edit credentials if needed:                              ║"
 echo "║     nano $APP_DIR/.env                                       ║"
 echo "║     systemctl restart ngabopay                               ║"
 echo "║                                                              ║"
-echo "║  4. Open dashboard, login, launch browser, log into Binance  ║"
+echo "║  4. Configure the GSM modem:                                 ║"
+echo "║     nano $APP_DIR/modem-engine/.env                          ║"
+echo "║     (set MODEM_PORT, MM_PIN, API_KEY)                        ║"
+echo "║     systemctl restart ngabopay-ussd-engine                   ║"
 echo "║                                                              ║"
-echo "║  5. Scan QR code from Android app to pair the phone          ║"
+echo "║  5. Open dashboard, login, launch browser, log into Binance  ║"
+echo "║                                                              ║"
+echo "║  6. Verify modem status on dashboard (Settings → GSM Modem)  ║"
 echo "║                                                              ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Service status:"
 systemctl status ngabopay --no-pager -l | head -5
+echo ""
+systemctl status ngabopay-ussd-engine --no-pager -l | head -5

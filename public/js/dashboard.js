@@ -197,8 +197,7 @@ function renderTransactions(transactions, bodyId, showAll = false) {
       <td>
         <div style="display:flex;gap:4px;">
           ${tx.status === 'detected' && tx.payout_status === 'pending' && tx.customer_phone
-            ? `<button class="btn btn-sm btn-primary" onclick="sendViaModem(${tx.id})" title="Send via USSD engine"><i class="bi bi-modem"></i></button>
-               <button class="btn btn-sm btn-success" onclick="markProcessing(${tx.id})" title="Send to phone app"><i class="bi bi-phone"></i></button>`
+            ? `<button class="btn btn-sm btn-primary" onclick="sendViaModem(${tx.id})" title="Send via USSD engine"><i class="bi bi-send"></i></button>`
             : ''}
           ${tx.status === 'detected' && tx.payout_status === 'pending'
             ? `<button class="btn btn-sm btn-warning" onclick="confirmManualPaid(${tx.id})" title="Confirm paid manually"><i class="bi bi-check2-circle"></i></button>`
@@ -240,13 +239,6 @@ async function createTransaction() {
   } else {
     showToast(result?.error || 'Failed to create transaction', 'error');
   }
-}
-
-async function markProcessing(id) {
-  await apiFetch('/payout/start', { method: 'POST', body: JSON.stringify({ transaction_id: id }) });
-  showToast('Marked as processing', 'success');
-  loadRecentTransactions();
-  loadTransactions();
 }
 
 async function markComplete(id) {
@@ -501,39 +493,6 @@ async function sendDailySummary() {
   showToast('Summary sent to Telegram', 'success');
 }
 
-// ─── QR Code Pairing ──────────────────────────────────────
-
-let qrCodeInstance = null;
-
-async function loadQRCode() {
-  const container = document.getElementById('qrCodeContainer');
-  if (!container) return;
-
-  const data = await apiFetch('/pair/qrdata');
-  if (!data || !data.url || !data.key) {
-    container.innerHTML = '<span style="color:#ea4335;font-size:12px;">Failed to load QR</span>';
-    return;
-  }
-
-  // Clear previous QR
-  container.innerHTML = '';
-
-  const qrPayload = JSON.stringify({ url: data.url, key: data.key });
-
-  if (typeof QRCode !== 'undefined') {
-    qrCodeInstance = new QRCode(container, {
-      text: qrPayload,
-      width: 176,
-      height: 176,
-      colorDark: '#000000',
-      colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M,
-    });
-  } else {
-    container.innerHTML = '<span style="color:#ea4335;font-size:12px;">QR library not loaded</span>';
-  }
-}
-
 // ─── GSM Modem / USSD Engine ──────────────────────────────
 
 function updateModemIndicators(isConnected, operatorName, signalPercent) {
@@ -682,14 +641,6 @@ async function sendViaModem(txId) {
   } else {
     showToast(result?.error || 'Failed to send payout', 'error');
   }
-}
-
-// ─── Phone App Status (legacy — kept for API compatibility) ──
-
-async function loadPhoneStatus() {
-  // No-op: Phone App card removed from dashboard.
-  // The USSD engine heartbeat goes through /api/phone/heartbeat
-  // and modem status is shown via refreshModemStatus().
 }
 
 // ─── Activity Log ─────────────────────────────────────────
