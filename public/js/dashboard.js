@@ -56,10 +56,13 @@ function handleWsMessage(msg) {
       break;
     case 'modem_disconnected':
       showToast('USSD engine / modem disconnected!', 'error');
+      modemConnectedSince = null;
       updateModemIndicators(false, null, null);
+      refreshModemStatus();
       break;
     case 'modem_reconnected':
       showToast('USSD engine / modem reconnected', 'success');
+      modemConnectedSince = Date.now();
       refreshModemStatus();
       break;
   }
@@ -493,7 +496,62 @@ async function sendDailySummary() {
   showToast('Summary sent to Telegram', 'success');
 }
 
+// ─── Change Password ──────────────────────────────────────
+
+async function changePassword() {
+  const current = document.getElementById('pwCurrent').value;
+  const newPw = document.getElementById('pwNew').value;
+  const confirm = document.getElementById('pwConfirm').value;
+  const successEl = document.getElementById('pwChangeSuccess');
+  const errorEl = document.getElementById('pwChangeError');
+
+  successEl.style.display = 'none';
+  errorEl.style.display = 'none';
+
+  if (!current || !newPw || !confirm) {
+    errorEl.textContent = 'All fields are required';
+    errorEl.style.display = 'block';
+    return;
+  }
+  if (newPw !== confirm) {
+    errorEl.textContent = 'New passwords do not match';
+    errorEl.style.display = 'block';
+    return;
+  }
+  if (newPw.length < 6) {
+    errorEl.textContent = 'New password must be at least 6 characters';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch('/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: current, new_password: newPw }),
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      successEl.textContent = 'Password changed successfully!';
+      successEl.style.display = 'block';
+      document.getElementById('pwCurrent').value = '';
+      document.getElementById('pwNew').value = '';
+      document.getElementById('pwConfirm').value = '';
+    } else {
+      errorEl.textContent = data.error || 'Failed to change password';
+      errorEl.style.display = 'block';
+    }
+  } catch (err) {
+    errorEl.textContent = 'Connection error';
+    errorEl.style.display = 'block';
+  }
+}
+
 // ─── GSM Modem / USSD Engine ──────────────────────────────
+
+let modemConnectedSince = null;
+let lastHeartbeatTime = null;
 
 function updateModemIndicators(isConnected, operatorName, signalPercent) {
   // Sidebar
@@ -526,15 +584,43 @@ function updateModemIndicators(isConnected, operatorName, signalPercent) {
 }
 
 async function refreshModemStatus() {
-  const data = await apiFetch('/modem/status');
+  // Fetch both modem status (from engine) and device status (from heartbeat DB)
+  const [data, deviceStatus] = await Promise.all([
+    apiFetch('/modem/status'),
+    apiFetch('/phone/status'),
+  ]);
   if (!data) return;
 
   const isConnected = data.connected || false;
   const operatorName = data.operator || null;
   const signalPct = data.signal_percent || null;
+  const engineReachable = !data.error;
+
+  // Track heartbeat and uptime
+  if (isConnected && !modemConnectedSince) {
+    modemConnectedSince = Date.now();
+  } else if (!isConnected) {
+    modemConnectedSince = null;
+  }
+
+  if (engineReachable) {
+    lastHeartbeatTime = Date.now();
+  }
 
   // ── Update sidebar + top bar indicators ──
   updateModemIndicators(isConnected, operatorName, signalPct);
+
+  // ── Trigger heartbeat pulse animation ──
+  if (engineReachable) {
+    ['dashModemDot', 'modemDot', 'topModemDot'].forEach(id => {
+      const dot = document.getElementById(id);
+      if (dot) {
+        dot.classList.remove('heartbeat');
+        void dot.offsetWidth; // force reflow to restart animation
+        dot.classList.add('heartbeat');
+      }
+    });
+  }
 
   // ── Update Dashboard "Payout Device" card ──
   const dashBadge = document.getElementById('dashModemBadge');
@@ -544,6 +630,11 @@ async function refreshModemStatus() {
   const dashSig = document.getElementById('dashModemSig');
   const dashEngine = document.getElementById('dashModemEngine');
   const dashCount = document.getElementById('dashModemCount');
+  const dashUptime = document.getElementById('dashModemUptime');
+  const dashConnType = document.getElementById('dashModemConnType');
+  const dashHeartbeat = document.getElementById('dashLastHeartbeat');
+  const dashTsBadge = document.getElementById('dashTailscaleBadge');
+  const dashTsLabel = document.getElementById('dashTailscaleLabel');
 
   if (dashBadge) {
     if (isConnected) {
@@ -561,13 +652,67 @@ async function refreshModemStatus() {
     else dashDot.classList.remove('active');
   }
   if (dashConn) {
-    dashConn.textContent = isConnected ? 'Connected' : (data.error ? 'Engine unreachable' : 'Disconnected');
-    dashConn.style.color = isConnected ? 'var(--success)' : 'var(--danger)';
+    if (isConnected) {
+      dashConn.textContent = 'Connected';
+      dashConn.style.color = 'var(--success)';
+    } else if (data.error) {
+      dashConn.textContent = 'Engine unreachable';
+      dashConn.style.color = 'var(--danger)';
+    } else {
+      dashConn.textContent = 'Modem disconnected';
+      dashConn.style.color = 'var(--warning)';
+    }
   }
   if (dashOp) dashOp.textContent = operatorName || '--';
   if (dashSig) dashSig.textContent = signalPct ? `${signalPct}%` : '--';
   if (dashEngine) dashEngine.textContent = data.busy ? `Sending #${data.current_payout}` : 'Idle';
   if (dashCount) dashCount.textContent = data.completed_count || '0';
+
+  // Uptime
+  if (dashUptime) {
+    if (modemConnectedSince) {
+      dashUptime.textContent = formatUptime(Date.now() - modemConnectedSince);
+      dashUptime.style.color = 'var(--success)';
+    } else {
+      dashUptime.textContent = '--';
+      dashUptime.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  // Connection type (Tailscale vs local)
+  if (dashConnType) {
+    if (engineReachable) {
+      dashConnType.textContent = 'Tailscale VPN';
+      dashConnType.style.color = 'var(--success)';
+    } else {
+      dashConnType.textContent = '--';
+      dashConnType.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  // Last heartbeat
+  if (dashHeartbeat && deviceStatus) {
+    const lastSeen = deviceStatus.last_seen;
+    if (lastSeen) {
+      const ago = Math.round((Date.now() - new Date(lastSeen).getTime()) / 1000);
+      dashHeartbeat.textContent = `Last heartbeat: ${ago < 60 ? ago + 's ago' : Math.round(ago / 60) + 'm ago'}`;
+      dashHeartbeat.style.color = ago < 90 ? 'var(--success)' : 'var(--danger)';
+    } else {
+      dashHeartbeat.textContent = 'Last heartbeat: never';
+      dashHeartbeat.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  // Tailscale badge
+  if (dashTsBadge && dashTsLabel) {
+    if (engineReachable) {
+      dashTsBadge.classList.remove('offline');
+      dashTsLabel.textContent = 'Tailscale: Connected';
+    } else {
+      dashTsBadge.classList.add('offline');
+      dashTsLabel.textContent = 'Tailscale: Offline';
+    }
+  }
 
   // ── Update Settings card (if open) ──
   const settBadge = document.getElementById('modemStatusBadge');
@@ -601,6 +746,17 @@ async function refreshModemStatus() {
     settErr.textContent = data.last_error || 'None';
     settErr.style.color = data.last_error ? 'var(--danger)' : 'var(--text-secondary)';
   }
+}
+
+function formatUptime(ms) {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${secs % 60}s`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ${hrs % 24}h`;
 }
 
 async function modemReconnect() {

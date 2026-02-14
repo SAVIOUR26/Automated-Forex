@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const Settings = require('../models/Settings');
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
@@ -36,9 +37,36 @@ function requireApiKey(req, res, next) {
 
 function login(username, password) {
   const validUser = process.env.DEALER_USERNAME || 'admin';
-  const validPass = process.env.DEALER_PASSWORD || 'admin';
 
+  // Check DB-stored hashed password first (set via Change Password)
+  const storedHash = Settings.get('dealer_password_hash', null);
+  if (storedHash && username === validUser) {
+    return bcrypt.compareSync(password, storedHash);
+  }
+
+  // Fall back to .env plain text
+  const validPass = process.env.DEALER_PASSWORD || 'admin';
   return username === validUser && password === validPass;
 }
 
-module.exports = { requireAuth, requireApiKey, login };
+function changePassword(currentPassword, newPassword) {
+  // Verify current password first
+  const validUser = process.env.DEALER_USERNAME || 'admin';
+  if (!login(validUser, currentPassword)) {
+    return { success: false, error: 'Current password is incorrect' };
+  }
+
+  // Hash and store the new password
+  const hash = bcrypt.hashSync(newPassword, 10);
+  Settings.set('dealer_password_hash', hash);
+  return { success: true };
+}
+
+function resetPassword(newPassword) {
+  // Force reset — no current password check (for CLI use only)
+  const hash = bcrypt.hashSync(newPassword, 10);
+  Settings.set('dealer_password_hash', hash);
+  return { success: true };
+}
+
+module.exports = { requireAuth, requireApiKey, login, changePassword, resetPassword };

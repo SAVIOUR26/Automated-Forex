@@ -342,13 +342,16 @@ module.exports = function(app) {
   // The Python USSD engine sends heartbeats every 30s to report modem health
 
   router.post('/phone/heartbeat', requireApiKey, express.json(), (req, res) => {
-    const { device, is_polling, payouts_completed } = req.body;
+    const { device, is_polling, payouts_completed, operator, signal_percent, modem_port } = req.body;
     Settings.set('phone_last_seen', new Date().toISOString());
     Settings.set('phone_device', device || 'Android');
     Settings.set('phone_is_polling', String(is_polling || false));
     if (payouts_completed !== undefined) {
       Settings.set('phone_payouts_completed', String(payouts_completed));
     }
+    if (operator) Settings.set('phone_operator', operator);
+    if (signal_percent !== undefined) Settings.set('phone_signal_percent', String(signal_percent));
+    if (modem_port) Settings.set('phone_modem_port', modem_port);
     res.json({ success: true });
   });
 
