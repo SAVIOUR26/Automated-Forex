@@ -247,6 +247,9 @@ async def _heartbeat_loop():
                         "device": device,
                         "is_polling": status["connected"],
                         "payouts_completed": completed_count,
+                        "operator": status.get("operator"),
+                        "signal_percent": status.get("signal_percent"),
+                        "modem_port": config.modem_port,
                     },
                     headers={
                         "X-API-Key": config.api_key,

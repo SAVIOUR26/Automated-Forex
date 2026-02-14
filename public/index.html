@@ -110,36 +110,56 @@
           <!-- Modem / Payout Device Status -->
           <div class="card" style="margin-bottom:16px;">
             <div class="card-header">
-              <h3>Payout Device</h3>
-              <span class="badge" id="dashModemBadge" style="background:#f1f3f4;color:var(--text-secondary);">--</span>
+              <h3><i class="bi bi-phone" style="margin-right:6px;"></i>Payout Device</h3>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="tailscale-badge offline" id="dashTailscaleBadge">
+                  <i class="bi bi-shield-lock"></i> <span id="dashTailscaleLabel">Tailscale: --</span>
+                </span>
+                <span class="badge" id="dashModemBadge" style="background:#f1f3f4;color:var(--text-secondary);">--</span>
+              </div>
             </div>
             <div class="card-body" style="padding:12px 18px;">
-              <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <span class="status-dot" id="dashModemDot"></span>
-                  <strong id="dashModemConn" style="font-size:14px;">Checking...</strong>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                <span class="status-dot" id="dashModemDot" style="width:14px;height:14px;"></span>
+                <strong id="dashModemConn" style="font-size:15px;">Checking...</strong>
+                <span id="dashLastHeartbeat" style="font-size:11px;color:var(--text-secondary);margin-left:auto;">Last heartbeat: --</span>
+              </div>
+              <div class="modem-detail-grid">
+                <div class="detail-item">
+                  <div class="detail-label">Operator</div>
+                  <div class="detail-value" id="dashModemOp">--</div>
                 </div>
-                <div>
-                  <span style="color:var(--text-secondary);font-size:12px;">Operator:</span>
-                  <span id="dashModemOp" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                <div class="detail-item">
+                  <div class="detail-label">Signal</div>
+                  <div class="detail-value" id="dashModemSig">--</div>
                 </div>
-                <div>
-                  <span style="color:var(--text-secondary);font-size:12px;">Signal:</span>
-                  <span id="dashModemSig" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                <div class="detail-item">
+                  <div class="detail-label">Engine</div>
+                  <div class="detail-value" id="dashModemEngine">--</div>
                 </div>
-                <div>
-                  <span style="color:var(--text-secondary);font-size:12px;">Engine:</span>
-                  <span id="dashModemEngine" style="font-size:13px;font-weight:600;margin-left:4px;">--</span>
+                <div class="detail-item">
+                  <div class="detail-label">Payouts Sent</div>
+                  <div class="detail-value" id="dashModemCount">0</div>
                 </div>
-                <div>
-                  <span style="color:var(--text-secondary);font-size:12px;">Payouts:</span>
-                  <span id="dashModemCount" style="font-size:13px;font-weight:600;margin-left:4px;">0</span>
+                <div class="detail-item">
+                  <div class="detail-label">Uptime</div>
+                  <div class="detail-value" id="dashModemUptime">--</div>
                 </div>
-                <div style="margin-left:auto;">
-                  <button class="btn btn-sm btn-outline" onclick="refreshModemStatus()" title="Refresh modem status">
-                    <i class="bi bi-arrow-clockwise"></i>
-                  </button>
+                <div class="detail-item">
+                  <div class="detail-label">Connection</div>
+                  <div class="detail-value" id="dashModemConnType">--</div>
                 </div>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm btn-outline" onclick="refreshModemStatus()" title="Refresh modem status">
+                  <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="modemReconnect()" title="Reconnect modem">
+                  <i class="bi bi-plug"></i> Reconnect
+                </button>
+                <button class="btn btn-sm btn-outline" onclick="modemTestUssd()" title="Test USSD">
+                  <i class="bi bi-telephone"></i> Test USSD
+                </button>
               </div>
             </div>
           </div>
@@ -431,6 +451,31 @@
                   </select>
                 </div>
                 <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <h3><i class="bi bi-shield-lock" style="margin-right:6px;"></i>Account Security</h3>
+              </div>
+              <div class="card-body">
+                <div id="pwChangeSuccess" style="display:none;background:#e6f4ea;color:var(--success);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:12px;"></div>
+                <div id="pwChangeError" style="display:none;background:#fce8e6;color:var(--danger);padding:8px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:12px;"></div>
+                <div class="form-group">
+                  <label>Current Password</label>
+                  <input type="password" id="pwCurrent" placeholder="Enter current password" autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                  <label>New Password</label>
+                  <input type="password" id="pwNew" placeholder="Enter new password (min 6 chars)" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                  <label>Confirm New Password</label>
+                  <input type="password" id="pwConfirm" placeholder="Re-enter new password" autocomplete="new-password">
+                </div>
+                <button class="btn btn-primary" onclick="changePassword()">
+                  <i class="bi bi-key"></i> Change Password
+                </button>
               </div>
             </div>
           </div>
