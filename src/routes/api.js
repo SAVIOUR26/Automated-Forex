@@ -292,24 +292,8 @@ module.exports = function(app) {
     res.json(ActivityLog.getRecent(limit));
   });
 
-  // ─── QR Code Pairing ─────────────────────────────────────
-  // Returns pairing data for the Android app to scan via QR code
-
-  router.get('/pair/qrdata', requireAuth, (req, res) => {
-    const protocol = req.protocol;
-    const host = req.get('host');
-    const serverUrl = `${protocol}://${host}`;
-    const apiKey = process.env.DEVICE_API_KEY || process.env.ANDROID_API_KEY || '';
-
-    res.json({
-      url: serverUrl,
-      key: apiKey,
-      name: 'NgaboPay',
-    });
-  });
-
-  // ─── Android App Endpoints ─────────────────────────────
-  // The Android app polls these to get pending payouts and report results
+  // ─── Payout Device Endpoints ─────────────────────────────
+  // The USSD engine polls these to get pending payouts and report results
 
   router.get('/payout/pending', requireApiKey, (req, res) => {
     const pending = Transaction.getPendingPayouts();
@@ -354,8 +338,8 @@ module.exports = function(app) {
     res.json(transaction);
   });
 
-  // ─── Phone App Heartbeat / Status ─────────────────────
-  // Persisted in DB so it survives server restarts
+  // ─── USSD Engine Heartbeat / Status ──────────────────────
+  // The Python USSD engine sends heartbeats every 30s to report modem health
 
   router.post('/phone/heartbeat', requireApiKey, express.json(), (req, res) => {
     const { device, is_polling, payouts_completed } = req.body;

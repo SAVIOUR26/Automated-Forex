@@ -5,12 +5,12 @@ Accepts payout requests from the NgaboPay Node.js server,
 executes interactive USSD flows via AT commands, and reports
 results back to NgaboPay via callback endpoints.
 
-Architecture:
-  NgaboPay (Node.js :3000) → HTTP → this engine (:7001) → serial → /dev/ttyVMODEM
-                                                                      ↕ socat/TCP
-                                                                  Windows laptop
-                                                                      ↕ USB
-                                                                   GSM Modem
+Architecture (engine on Windows laptop via Tailscale):
+  NgaboPay VPS (:3000) ──Tailscale──→ this engine (:7001) → COM port → USB GSM Modem
+  this engine ──HTTPS──→ NgaboPay VPS (callbacks + heartbeats)
+
+Architecture (engine on VPS directly):
+  NgaboPay VPS (:3000) → localhost → this engine (:7001) → /dev/ttyUSB0 → GSM Modem
 """
 
 import asyncio

@@ -115,7 +115,7 @@ server.on('upgrade', (request, socket, head) => {
   // Check for API key in query string (for programmatic access)
   const url = new URL(request.url, `http://${request.headers.host}`);
   const apiKey = url.searchParams.get('apiKey');
-  const deviceKey = process.env.DEVICE_API_KEY || process.env.ANDROID_API_KEY;
+  const deviceKey = process.env.DEVICE_API_KEY;
   if (apiKey && deviceKey && apiKey === deviceKey) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
@@ -179,7 +179,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net", "fonts.googleapis.com"],
       fontSrc: ["'self'", "fonts.gstatic.com", "cdn.jsdelivr.net"],
       imgSrc: ["'self'", "data:", "blob:"],
